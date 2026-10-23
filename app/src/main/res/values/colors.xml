@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bmo_turquoise">#4ECBA8</color>
+    <color name="bmo_turquoise_light">#90E5C8</color>
+    <color name="bmo_deep">#0B3026</color>
+    <color name="bmo_green">#1A7848</color>
+    <color name="bmo_ink">#1A1A1A</color>
+    <color name="settings_bg">#F4FBF8</color>
+    <color name="settings_surface">#FFFFFF</color>
+    <color name="settings_text">#10231D</color>
+    <color name="settings_muted">#5B746B</color>
+</resources>

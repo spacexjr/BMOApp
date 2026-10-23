@@ -1,0 +1,22 @@
+# Gradle / build
+.gradle/
+**/build/
+app/.cxx/
+*.apk
+*.aab
+
+# Android Studio / IDEA
+.idea/
+*.iml
+captures/
+
+# Local SDK path
+local.properties
+
+# Large language model (not bundled in the APK; see README)
+assets/models/*.gguf
+assets/models/*.part
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,4 @@
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+-keep class org.vosk.** { *; }
+-keep class com.spacexjr.bmo.llm.LlamaCppBridge { *; }
+-keepclasseswithmembernames class * { native <methods>; }
