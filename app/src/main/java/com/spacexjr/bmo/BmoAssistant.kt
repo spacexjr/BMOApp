@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.text.Normalizer
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -71,18 +72,32 @@ class BmoAssistant(
 
     @Volatile private var thinkingSupported = false
     @Volatile private var lastToolNotice = ""
+    @Volatile private var asrStartedAt = 0L
+    @Volatile private var ttsRequestedAt = 0L
+    @Volatile private var ttsPlaybackStartedAt = 0L
 
     init {
         tts.onStart = {
             _speaking.value = true
             _thinking.value = false
             _state.value = BmoState.SPEAKING
-            diagnostics.info("TTS", "reprodução iniciada")
+            val now = SystemClock.elapsedRealtime()
+            ttsPlaybackStartedAt = now
+            if (ttsRequestedAt > 0L) {
+                diagnostics.info("TTS", "áudio iniciado em ${now - ttsRequestedAt} ms")
+            }
         }
         tts.onDone = {
             _speaking.value = false
             _state.value = BmoState.RESTING
-            diagnostics.info("TTS", "reprodução concluída")
+            if (ttsPlaybackStartedAt > 0L) {
+                diagnostics.info(
+                    "TTS",
+                    "reprodução concluída em ${SystemClock.elapsedRealtime() - ttsPlaybackStartedAt} ms",
+                )
+            } else {
+                diagnostics.info("TTS", "reprodução concluída")
+            }
             if (_bubble.value.isNotBlank()) {
                 _status.value = "Pode falar de novo quando quiser"
             }
@@ -101,20 +116,34 @@ class BmoAssistant(
             _listening.value = true
             _state.value = BmoState.LISTENING
             _status.value = "Estou ouvindo..."
+            asrStartedAt = SystemClock.elapsedRealtime()
             diagnostics.info("ASR", "microfone ativo")
         }
         asr.onPartial = { text ->
             if (settings.showTranscript && text.isNotBlank()) _bubble.value = text
         }
+        asr.onSpeechDetected = {
+            _state.value = BmoState.LISTENING
+            _status.value = "Estou ouvindo você..."
+            diagnostics.info("ASR", "fala detectada pelo Vosk")
+        }
         asr.onResult = { result ->
             handlesUtterance.set(true)
             _listening.value = false
+            if (asrStartedAt > 0L) {
+                diagnostics.info(
+                    "ASR",
+                    "fala reconhecida em ${SystemClock.elapsedRealtime() - asrStartedAt} ms",
+                )
+                asrStartedAt = 0L
+            }
             _bubble.value = result.text
             onUtterance(result.text)
         }
         asr.onError = { error ->
             handlesUtterance.set(false)
             _listening.value = false
+            asrStartedAt = 0L
             _state.value = BmoState.CONFUSED
             _status.value = "Toque no rosto para tentar de novo"
             diagnostics.warn("ASR", error.message)
@@ -132,7 +161,7 @@ class BmoAssistant(
         wake.onWakeWord = {
             if (!busy.get() && foreground) {
                 diagnostics.info("WakeWord", "Ei, BMO detectado")
-                _state.value = BmoState.SURPRISED
+                _state.value = BmoState.LISTENING
                 _status.value = "Ei! Pode falar."
                 scope.launch {
                     delay(420)
@@ -257,6 +286,7 @@ class BmoAssistant(
         }
         _state.value = BmoState.THINKING
         _status.value = "Preparando a voz..."
+        ttsRequestedAt = SystemClock.elapsedRealtime()
         tts.speak(forSpeech(text))
     }
 
@@ -273,6 +303,12 @@ class BmoAssistant(
             cancelEverything()
             return
         }
+        // Comandos explícitos de aparelho não dependem do modelo: executam a
+        // ação permitida diretamente e respondem com o resultado real.
+        detectDirectAction(text)?.let { direct ->
+            runDirectAction(text, direct)
+            return
+        }
         if (!llm.isLoaded) {
             handlesUtterance.set(false)
             busy.set(false)
@@ -282,6 +318,10 @@ class BmoAssistant(
             _status.value = "Modelo indisponível"
             diagnostics.warn("LLM", "tentativa de conversa sem modelo carregado")
             if (settings.speechSynthesisEnabled) tts.speak(message)
+            else {
+                _thinking.value = false
+                resumeWakeIfPossible()
+            }
             return
         }
         if (!busy.compareAndSet(false, true)) return
@@ -289,9 +329,11 @@ class BmoAssistant(
         _state.value = BmoState.THINKING
         _status.value = "Pensando..."
         diagnostics.info("Assistant", "usuário: $text")
+        val startedAt = SystemClock.elapsedRealtime()
         scope.launch {
             try {
                 val reply = generateReply(text)
+                diagnostics.info("LLM", "resposta gerada em ${SystemClock.elapsedRealtime() - startedAt} ms com ${settings.threads} threads")
                 if (reply.isBlank()) {
                     throw IllegalStateException("O modelo não retornou uma resposta final.")
                 }
@@ -322,6 +364,135 @@ class BmoAssistant(
                         tts.speak(message)
                     }
                 }
+                resumeWakeIfPossible()
+            }
+        }
+    }
+
+    private data class DirectAction(
+        val name: String,
+        val arguments: JSONObject,
+        val successStatus: String = "Ação concluída",
+    )
+
+    /**
+     * Reconhece comandos de aparelho sem depender da criatividade do modelo.
+     * Só entram aqui ações reais da lista permitida; qualquer outra frase segue
+     * para o Qwen.
+     */
+    private fun detectDirectAction(text: String): DirectAction? {
+        val n = normalizeCommand(text)
+        val asksToOpen = Regex("\\b(abrir|abra|abre|iniciar|inicia|executar|executa|mostrar|mostra|ligar|liga)\\b")
+            .containsMatchIn(n)
+
+        if (Regex("\\b(que horas|horas sao|hora agora|qual a hora|me diga as horas)\\b").containsMatchIn(n)) {
+            return DirectAction("get_current_time", JSONObject())
+        }
+        if (Regex("\\b(que dia|data de hoje|dia de hoje|hoje e que dia|qual a data|qual o dia)\\b").containsMatchIn(n)) {
+            return DirectAction("get_current_date", JSONObject())
+        }
+        if (Regex("\\bbateria\\b").containsMatchIn(n) || n.contains("nivel de carga")) {
+            return DirectAction("get_battery_status", JSONObject())
+        }
+        if (Regex("\\b(qual|que)\\b.{0,20}\\b(aparelho|celular|modelo|android)\\b").containsMatchIn(n)) {
+            return DirectAction("get_device_info", JSONObject())
+        }
+
+        Regex("\\bvolume\\b[^0-9]{0,24}(\\d{1,3})").find(n)?.let { match ->
+            val percent = match.groupValues[1].toIntOrNull()
+            if (percent != null && percent in 0..100) {
+                return DirectAction(
+                    "set_media_volume",
+                    JSONObject().put("percent", percent),
+                    successStatus = "Volume ajustado",
+                )
+            }
+        }
+
+        if (asksToOpen || n.contains("configuracoes de")) {
+            val section = when {
+                n.contains("wifi") || n.contains("wi-fi") -> "wifi"
+                n.contains("bluetooth") -> "bluetooth"
+                n.contains("acessibilidade") -> "accessibility"
+                n.contains("localizacao") -> "location"
+                n.contains("armazenamento") -> "storage"
+                n.contains("tela") || n.contains("display") -> "display"
+                n.contains("som") || n.contains("audio") -> "sound"
+                n.contains("bateria") -> "battery"
+                n.contains("aplicativos") || n.contains("apps") -> "apps"
+                n.contains("configuracoes") -> "settings"
+                else -> null
+            }
+            if (section != null) {
+                return DirectAction(
+                    "open_system_settings",
+                    JSONObject().put("section", section),
+                    successStatus = "Configurações abertas",
+                )
+            }
+        }
+
+        val appMatch = Regex("\\b(abrir|abra|abre|iniciar|inicia|executar|executa)\\s+(.+)$").find(n)
+        if (appMatch != null) {
+            var app = appMatch.groupValues[2].trim()
+            app = app.replace(Regex("^(o|a|os|as)\\s+"), "").trim()
+            if (app.isNotBlank()) {
+                return DirectAction(
+                    "open_application",
+                    JSONObject().put("name", app),
+                    successStatus = "Aplicativo aberto",
+                )
+            }
+        }
+        return null
+    }
+
+    private fun normalizeCommand(text: String): String {
+        val decomposed = Normalizer.normalize(text.lowercase(Locale.ROOT), Normalizer.Form.NFD)
+        return decomposed.replace(Regex("\\p{M}+"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun runDirectAction(text: String, direct: DirectAction) {
+        if (!busy.compareAndSet(false, true)) return
+        handlesUtterance.set(false)
+        _thinking.value = true
+        _state.value = BmoState.THINKING
+        _status.value = "Executando..."
+        diagnostics.info("Assistant", "usuário: $text")
+        scope.launch {
+            try {
+                val result = withContext(Dispatchers.Main) {
+                    actions.execute(direct.name, direct.arguments)
+                }
+                diagnostics.info(
+                    "Action",
+                    "${direct.name} -> ${if (result.ok) "ok" else "falha"}: ${result.message}",
+                )
+                addHistory("user", text)
+                addHistory("assistant", result.message)
+                _bubble.value = result.message
+                _status.value = if (result.ok) direct.successStatus else "Não consegui concluir"
+                busy.set(false)
+                handlesUtterance.set(false)
+                if (settings.speechSynthesisEnabled && result.ok) {
+                    speak(result.message)
+                } else {
+                    _thinking.value = false
+                    _state.value = BmoState.RESTING
+                    resumeWakeIfPossible()
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "direct action failed", t)
+                diagnostics.error("Action", "falha na ação ${direct.name}", t)
+                _thinking.value = false
+                _state.value = BmoState.ERROR
+                val message = "Não consegui executar essa ação: ${t.message ?: "erro desconhecido"}"
+                _bubble.value = message
+                _status.value = message
+                busy.set(false)
+                handlesUtterance.set(false)
                 resumeWakeIfPossible()
             }
         }
@@ -399,7 +570,8 @@ class BmoAssistant(
     }
 
     private fun buildPrompt(userText: String, extraTail: String? = null): String {
-        val system = systemPrompt()
+        val toolsNeeded = extraTail != null || needsTools(userText)
+        val system = systemPrompt(toolsNeeded)
         val builder = StringBuilder()
         builder.append("<|im_start|>system\n").append(system).append("<|im_end|>\n")
         var budget = (settings.contextSize * 3).coerceAtLeast(1800)
@@ -416,9 +588,7 @@ class BmoAssistant(
                 .append(content).append("<|im_end|>\n")
         }
         builder.append("<|im_start|>user\n").append(userText)
-        if (!settings.thinkingEnabled && !thinkingSupported) {
-            builder.append(" /no_think")
-        }
+
         builder.append("<|im_end|>\n")
         if (extraTail != null) {
             builder.append(extraTail)
@@ -430,43 +600,34 @@ class BmoAssistant(
 
     private fun assistantHeader(): String {
         return if (!settings.thinkingEnabled && thinkingSupported) {
-            // This is the exact mechanism the Qwen3 chat template uses when
-            // enable_thinking=false: an empty think block forces a direct answer.
+            // Mecanismo do template Qwen3 para respostas diretas.
             "<|im_start|>assistant\n thinking\n\n</think>\n\n"
         } else {
             "<|im_start|>assistant\n"
         }
     }
 
-    private fun systemPrompt(): String {
-        return """
-            Você é o BMO, um pequeno assistente robótico inspirado no personagem BMO de Adventure Time.
-            Fale sempre em português brasileiro, com frases curtas, naturais e amigáveis. Seja curioso e divertido, mas sem exagerar.
-            Você conversa por voz: evite listas longas, markdown e respostas com mais de três frases, a menos que o usuário peça detalhes.
-            Não invente ações. Se uma ferramenta falhar, diga o que realmente aconteceu. Se não souber algo, admita com naturalidade.
-            Para hora ou data, use as ferramentas disponíveis em vez de adivinhar.
-            Nunca diga que está ouvindo se o microfone não estiver ativo, nem que está falando se não houver áudio.
-            Não revele raciocínio interno; entregue apenas a resposta final.
+    private fun needsTools(text: String): Boolean {
+        val value = text.lowercase(Locale.ROOT)
+        return TOOL_KEYWORDS.any { value.contains(it) }
+    }
 
-            ${actions.definitionsPrompt()}
-        """.trimIndent()
+    private fun systemPrompt(withTools: Boolean): String {
+        val base = "Você é o BMO, um robô divertido e curioso. Responda em português do Brasil " +
+            "com até duas frases curtas. Seja honesto e não invente ações. Não mostre raciocínio interno."
+        return if (withTools) base + "\n\n" + actions.definitionsPrompt() else base
     }
 
     private fun addHistory(role: String, text: String) {
         history.add(role to text)
-        if (history.size > 12) {
-            history = history.takeLast(12).toMutableList()
+        val limit = settings.historyLimit.coerceIn(0, 40)
+        if (history.size > limit) {
+            history = history.takeLast(limit).toMutableList()
         }
     }
 
-    private fun forSpeech(text: String): String {
-        return text
-            .replace(Regex("```.*?```", RegexOption.DOT_MATCHES_ALL), "")
-            .replace(Regex("[*_`#>]"), "")
-            .replace(Regex("\\[(.*?)]\\((.*?)\\)"), "$1")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-    }
+    private fun forSpeech(text: String): String =
+        TextToSpeechManager.sanitizeForSpeech(text)
 
     private fun friendlyError(t: Throwable): String {
         val msg = t.message ?: ""
@@ -481,8 +642,7 @@ class BmoAssistant(
     suspend fun loadModelIfAvailable(): ModelStatus {
         settings = settingsRepository.get()
         val path = settings.modelPath.ifBlank {
-            val fallback = java.io.File(context.getExternalFilesDir(null), "models/Qwen3-0.6B-Q8_0.gguf")
-            if (fallback.exists()) fallback.absolutePath else ""
+            settingsRepository.findLocalModel(context)?.absolutePath ?: ""
         }
         if (path.isBlank()) {
             return ModelStatus.NotLoaded
@@ -494,11 +654,11 @@ class BmoAssistant(
         val result = llm.load(path, settings.contextSize, settings.threads)
         result.onSuccess { ready ->
             thinkingSupported = ready.supportsThinking
-            diagnostics.info("LLM", "modelo carregado: ${ready.name}; thinking=${if (ready.supportsThinking) "suportado" else "não suportado"}")
+            diagnostics.info("LLM", "modelo carregado: ${ready.name}; raciocínio interno=${if (ready.supportsThinking) "suportado" else "não suportado"}")
             _status.value = if (ready.supportsThinking) {
                 "Modelo carregado"
             } else {
-                "Modelo carregado (Thinking não suportado pelo template)"
+                "Modelo carregado · raciocínio interno não suportado"
             }
         }
         result.onFailure { error ->
@@ -519,6 +679,11 @@ class BmoAssistant(
     }
 
     fun modelTemplateSupportsThinking(): Boolean = thinkingSupported
+
+    fun clearHistory() {
+        history.clear()
+        diagnostics.info("Histórico", "histórico da conversa apagado")
+    }
 
     fun wakeWordRunning(): Boolean = wake.isRunning
 
@@ -554,6 +719,19 @@ class BmoAssistant(
         }
     }
 
+    /** Pré-carrega os motores locais fora da thread principal. */
+    fun prepareEngines() {
+        tts.prepare()
+        scope.launch(Dispatchers.IO) {
+            try {
+                vosk.get()
+                diagnostics.info("ASR", "modelo Vosk pt-BR disponível")
+            } catch (t: Throwable) {
+                diagnostics.error("ASR", "falha ao preparar modelo Vosk", t)
+            }
+        }
+    }
+
     fun shutdown() {
         llm.cancel()
         tts.release()
@@ -567,5 +745,10 @@ class BmoAssistant(
 
     companion object {
         private const val TAG = "BmoAssistant"
+        private val TOOL_KEYWORDS = listOf(
+            "hora", "horas", "data", "hoje", "dia", "abrir", "abra", "aplicativo", "app",
+            "configura", "wifi", "wi-fi", "bluetooth", "tela", "som", "bateria", "aparelho",
+            "celular", "volume", "instalado", "apps", "sistema", "acessibilidade", "localiza",
+        )
     }
 }

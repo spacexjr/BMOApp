@@ -12,21 +12,23 @@ data class BmoSettings(
     val thinkingEnabled: Boolean = false,
     val maxTokens: Int = 96,
     val contextSize: Int = 1024,
-    val threads: Int = 3,
+    val threads: Int = 4,
     val speechRecognitionEnabled: Boolean = true,
     val speechSynthesisEnabled: Boolean = true,
     val ttsSpeed: Float = 1.0f,
     val ttsVolume: Float = 1.0f,
     val wakeWordEnabled: Boolean = false,
     val faceScale: Float = 1.0f,
-    val defaultExpression: String = "neutral",
+    val defaultExpression: String = "idle",
     val showTranscript: Boolean = true,
     val autoListen: Boolean = true,
+    val historyLimit: Int = 12,
 )
 
 class SettingsRepository(context: Context) {
+    private val appContext = context.applicationContext
     private val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences("bmo_settings", Context.MODE_PRIVATE)
+        appContext.getSharedPreferences("bmo_settings", Context.MODE_PRIVATE)
 
     private val _settings = MutableStateFlow(read())
     val settings: StateFlow<BmoSettings> = _settings.asStateFlow()
@@ -51,33 +53,67 @@ class SettingsRepository(context: Context) {
             .putString(KEY_DEFAULT_EXPRESSION, next.defaultExpression)
             .putBoolean(KEY_TRANSCRIPT, next.showTranscript)
             .putBoolean(KEY_AUTO_LISTEN, next.autoListen)
+            .putInt(KEY_HISTORY_LIMIT, next.historyLimit)
             .apply()
     }
 
     fun setModelPath(path: String) = update { it.copy(modelPath = path) }
 
-    fun defaultModelFile(context: Context): File =
-        File(context.getExternalFilesDir(null), "models/Qwen3-0.6B-Q8_0.gguf")
+    /**
+     * Procura um GGUF já copiado para a pasta privada externa do app.
+     * Qwen2.5-0.5B-Instruct (Q4_K_M) tem prioridade; qualquer outro GGUF é
+     * aceito como alternativa, mas nunca é baixado automaticamente.
+     */
+    fun findLocalModel(context: Context): File? {
+        val dir = File(context.getExternalFilesDir(null), "models")
+        val files = dir.listFiles { file -> file.isFile && file.extension.equals("gguf", true) }
+            ?: return null
+        return files.firstOrNull { it.name.contains("qwen2.5", ignoreCase = true) }
+            ?: files.firstOrNull { it.name.contains("qwen", ignoreCase = true) }
+            ?: files.maxByOrNull { it.length() }
+    }
 
     private fun read(): BmoSettings {
-        val defaultModel = File(
-            prefs.getString(KEY_MODEL_PATH, "") ?: ""
-        )
+        val storedPath = prefs.getString(KEY_MODEL_PATH, "") ?: ""
+        val preferred = findLocalModel(appContext)
+        // Migração da versão anterior: se havia um Qwen3 selecionado mas o
+        // Qwen2.5 pedido pelo projeto está presente, passa a usá-lo.
+        val modelPath = if (storedPath.contains("qwen3", ignoreCase = true) &&
+            preferred != null && preferred.name.contains("qwen2.5", ignoreCase = true)
+        ) {
+            preferred.absolutePath.also { prefs.edit().putString(KEY_MODEL_PATH, it).apply() }
+        } else {
+            storedPath
+        }
+        // A expressão padrão é usada apenas em repouso. "Falando" e
+        // "Inicialização" são estados reais e não podem ficar fixos na tela.
+        val storedExpression = prefs.getString(KEY_DEFAULT_EXPRESSION, "idle") ?: "idle"
+        val restingExpression = if (
+            storedExpression.equals("speaking", ignoreCase = true) ||
+            storedExpression.equals("warmup", ignoreCase = true)
+        ) {
+            "idle".also {
+                prefs.edit().putString(KEY_DEFAULT_EXPRESSION, it).apply()
+            }
+        } else {
+            storedExpression
+        }
         return BmoSettings(
-            modelPath = prefs.getString(KEY_MODEL_PATH, "") ?: "",
+            modelPath = modelPath,
             thinkingEnabled = prefs.getBoolean(KEY_THINKING, false),
             maxTokens = prefs.getInt(KEY_MAX_TOKENS, 96).coerceIn(16, 512),
             contextSize = prefs.getInt(KEY_CONTEXT, 1024).coerceIn(256, 4096),
-            threads = prefs.getInt(KEY_THREADS, 3).coerceIn(1, 6),
+            threads = prefs.getInt(KEY_THREADS, 4).coerceIn(1, 6),
             speechRecognitionEnabled = prefs.getBoolean(KEY_ASR, true),
             speechSynthesisEnabled = prefs.getBoolean(KEY_TTS, true),
             ttsSpeed = prefs.getFloat(KEY_TTS_SPEED, 1.0f),
             ttsVolume = prefs.getFloat(KEY_TTS_VOLUME, 1.0f),
             wakeWordEnabled = prefs.getBoolean(KEY_WAKE, false),
             faceScale = prefs.getFloat(KEY_FACE_SCALE, 1.0f),
-            defaultExpression = prefs.getString(KEY_DEFAULT_EXPRESSION, "neutral") ?: "neutral",
+            defaultExpression = restingExpression,
             showTranscript = prefs.getBoolean(KEY_TRANSCRIPT, true),
             autoListen = prefs.getBoolean(KEY_AUTO_LISTEN, true),
+            historyLimit = prefs.getInt(KEY_HISTORY_LIMIT, 12).coerceIn(0, 40),
         ).also {
             if (it.modelPath.isBlank()) {
                 // The default location is resolved by the UI once the app directory exists.
@@ -100,5 +136,6 @@ class SettingsRepository(context: Context) {
         private const val KEY_DEFAULT_EXPRESSION = "default_expression"
         private const val KEY_TRANSCRIPT = "show_transcript"
         private const val KEY_AUTO_LISTEN = "auto_listen"
+        private const val KEY_HISTORY_LIMIT = "history_limit"
     }
 }

@@ -37,6 +37,8 @@ class SpeechRecognizerManager(
     var onError: ((Error) -> Unit)? = null
     var onReady: (() -> Unit)? = null
     var onFinished: (() -> Unit)? = null
+    /** Chamado quando o Vosk confirma que há fala humana no áudio. */
+    var onSpeechDetected: (() -> Unit)? = null
 
     val isListening: Boolean get() = running
 
@@ -86,7 +88,7 @@ class SpeechRecognizerManager(
                 record.startRecording()
                 val buffer = ShortArray(BUFFER_SAMPLES)
                 val startedAt = SystemClock.elapsedRealtime()
-                var lastVoiceAt = 0L
+                var lastSpeechAt = 0L
                 var heardSpeech = false
                 var lastPartial = ""
 
@@ -98,44 +100,67 @@ class SpeechRecognizerManager(
                         }
                         continue
                     }
-                    val rms = rms(buffer, read)
-                    if (rms > VOICE_RMS) {
-                        lastVoiceAt = SystemClock.elapsedRealtime()
-                        heardSpeech = true
-                    }
+
+                    val now = SystemClock.elapsedRealtime()
+                    var confirmedFinal = ""
+
                     if (recognizer.acceptWaveForm(buffer, read)) {
-                        val text = extractText(recognizer.result)
-                        if (text.isNotBlank()) {
-                            postResult(text.trim())
+                        confirmedFinal = extractText(recognizer.result).trim()
+                        if (isUsableSpeech(confirmedFinal)) {
+                            postResult(confirmedFinal)
                             return@launch
                         }
                     } else {
-                        val partial = extractText(recognizer.partialResult, "partial")
-                        if (partial.isNotBlank() && partial != lastPartial) {
-                            lastPartial = partial
-                            main.post { onPartial?.invoke(partial) }
+                        val partial = extractText(recognizer.partialResult, "partial").trim()
+                        // O Vosk devolve texto parcial somente enquanto há fala
+                        // reconhecível. É ele que define o início e a duração da
+                        // fala; o volume do microfone não é usado como limiar.
+                        if (isUsableSpeech(partial)) {
+                            if (!heardSpeech) {
+                                heardSpeech = true
+                                main.post { onSpeechDetected?.invoke() }
+                            }
+                            if (partial != lastPartial) {
+                                lastPartial = partial
+                                // Só renova a janela de silêncio quando o Vosk
+                                // produz uma nova hipótese; texto parcial repetido
+                                // não deve manter o microfone aberto para sempre.
+                                lastSpeechAt = now
+                                main.post { onPartial?.invoke(partial) }
+                            } else if (lastSpeechAt == 0L) {
+                                lastSpeechAt = now
+                            }
                         }
                     }
-                    val elapsed = SystemClock.elapsedRealtime() - startedAt
-                    val silence = SystemClock.elapsedRealtime() - lastVoiceAt
+
+                    val silence = now - lastSpeechAt
                     if (heardSpeech && silence > SILENCE_END_MS) {
-                        val finalText = extractText(recognizer.finalResult)
-                        if (finalText.isNotBlank()) {
-                            postResult(finalText.trim())
-                        } else if (lastPartial.isNotBlank()) {
-                            postResult(lastPartial.trim())
+                        val finalText = extractText(recognizer.finalResult).trim()
+                        val text = when {
+                            isUsableSpeech(finalText) -> finalText
+                            isUsableSpeech(lastPartial) -> lastPartial
+                            else -> ""
+                        }
+                        if (text.isNotBlank()) {
+                            postResult(text)
                         } else {
                             postError("Não consegui entender. Tente falar um pouco mais perto do microfone.")
                         }
                         return@launch
                     }
-                    if (!heardSpeech && elapsed > NO_SPEECH_TIMEOUT_MS) {
+                    if (!heardSpeech && now - startedAt > NO_SPEECH_TIMEOUT_MS) {
                         postError("Não ouvi nada. Toque no rosto para tentar novamente.")
                         return@launch
                     }
-                    if (elapsed > MAX_LISTEN_MS) {
-                        val finalText = extractText(recognizer.finalResult)
-                        if (finalText.isNotBlank()) postResult(finalText.trim())
+                    if (now - startedAt > MAX_LISTEN_MS) {
+                        val finalText = extractText(recognizer.finalResult).trim()
+                        val text = when {
+                            isUsableSpeech(finalText) -> finalText
+                            isUsableSpeech(lastPartial) -> lastPartial
+                            isUsableSpeech(confirmedFinal) -> confirmedFinal
+                            else -> ""
+                        }
+                        if (text.isNotBlank()) postResult(text)
                         else postError("A fala demorou demais. Tente uma frase mais curta.")
                         return@launch
                     }
@@ -184,14 +209,12 @@ class SpeechRecognizerManager(
         main.post { onError?.invoke(Error(message)) }
     }
 
-    private fun rms(buffer: ShortArray, count: Int): Double {
-        if (count == 0) return 0.0
-        var sum = 0.0
-        for (i in 0 until count) {
-            val v = buffer[i].toDouble()
-            sum += v * v
-        }
-        return kotlin.math.sqrt(sum / count)
+    private fun isUsableSpeech(text: String): Boolean {
+        // "[unk]" é ruído/termo fora do vocabulário e não deve iniciar a escuta.
+        val clean = text.replace("[unk]", " ", ignoreCase = true).trim()
+        if (clean.length < 2) return false
+        // Evita ruído curto e pontuação isolada.
+        return clean.any { it.isLetterOrDigit() }
     }
 
     private fun extractText(json: String?, key: String = "text"): String {
@@ -208,8 +231,7 @@ class SpeechRecognizerManager(
         const val SAMPLE_RATE = 16000
         private const val BUFFER_SAMPLES = 1600
         private const val BUFFER_BYTES = BUFFER_SAMPLES * 2
-        private const val VOICE_RMS = 420.0
-        private const val SILENCE_END_MS = 1250L
+        private const val SILENCE_END_MS = 1100L
         private const val NO_SPEECH_TIMEOUT_MS = 6000L
         private const val MAX_LISTEN_MS = 15000L
     }

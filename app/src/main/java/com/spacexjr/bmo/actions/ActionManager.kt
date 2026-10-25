@@ -3,7 +3,6 @@ package com.spacexjr.bmo.actions
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.BatteryManager
@@ -57,30 +56,18 @@ class ActionManager(private val context: Context) {
             mapOf("percent" to "inteiro de 0 a 100"),
         ),
         ToolDefinition("list_installed_apps", "Lista aplicativos com ícone na tela inicial.", emptyMap()),
-        ToolDefinition(
-            "set_flashlight",
-            "Liga ou desliga a lanterna, quando o aparelho permite.",
-            mapOf("enabled" to "true ou false"),
-        ),
     )
 
     fun definitions(): List<ToolDefinition> = definitions
 
     fun definitionsPrompt(): String = buildString {
-        appendLine("Ferramentas permitidas (somente estas):")
-        definitions.forEach { def ->
-            append("- ${def.name}")
-            if (def.arguments.isNotEmpty()) {
-                append("(")
-                append(def.arguments.entries.joinToString(", ") { "${it.key}: ${it.value}" })
-                append(")")
-            }
-            append(" — ${def.description}\n")
-        }
-        appendLine("Para usar uma ferramenta, responda APENAS com:")
-        appendLine("<tool_call>{\"name\":\"nome_da_ferramenta\",\"arguments\":{...}}</tool_call>")
-        appendLine("Nunca diga que executou algo antes de receber o resultado real da ferramenta.")
-        append("Se não precisar de ferramenta, responda normalmente em português do Brasil.")
+        appendLine("Ferramentas permitidas: get_current_time; get_current_date; " +
+            "open_application{name}; open_system_settings{section}; " +
+            "get_battery_status; get_device_info; set_media_volume{percent}; " +
+            "list_installed_apps.")
+        appendLine("Para usar uma ferramenta responda APENAS:")
+        appendLine("<tool_call>{\"name\":\"ferramenta\",\"arguments\":{...}}</tool_call>")
+        append("Se não precisar, responda normalmente.")
     }
 
     fun execute(name: String, arguments: JSONObject): ToolResult {
@@ -105,7 +92,6 @@ class ActionManager(private val context: Context) {
                 )
                 "set_media_volume" -> setVolume(arguments.optInt("percent", -1))
                 "list_installed_apps" -> listApps()
-                "set_flashlight" -> setFlashlight(arguments.optBoolean("enabled", false))
                 else -> ToolResult(false, "Ação não permitida: $name.")
             }
         } catch (t: Throwable) {
@@ -184,13 +170,6 @@ class ActionManager(private val context: Context) {
             json.put(JSONObject().put("nome", label).put("pacote", pkg))
         }
         return ToolResult(true, json.toString())
-    }
-
-    private fun setFlashlight(enabled: Boolean): ToolResult {
-        val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        val id = manager.cameraIdList.firstOrNull() ?: return ToolResult(false, "Este aparelho não expõe uma câmera para lanterna.")
-        manager.setTorchMode(id, enabled)
-        return ToolResult(true, if (enabled) "Liguei a lanterna." else "Desliguei a lanterna.")
     }
 
     companion object {

@@ -15,20 +15,26 @@ import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import com.spacexjr.bmo.data.LocalModelStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Offline neural speech synthesis using sherpa-onnx + Piper VITS (pt-BR Faber).
- * Audio is generated and rendered locally with AudioTrack; no text ever leaves
- * the device.
+ * Síntese de voz neural offline com sherpa-onnx + Piper VITS (pt-BR Faber).
+ *
+ * O áudio é gerado e reproduzido no próprio aparelho. Cada pedido de fala
+ * recebe um identificador; resultados de sínteses antigas são descartados para
+ * impedir que uma resposta anterior seja reproduzida depois de uma nova.
  */
 class TextToSpeechManager(
     private val context: Context,
@@ -45,11 +51,18 @@ class TextToSpeechManager(
     private val _status = MutableStateFlow<Status>(Status.NotReady)
     val status: StateFlow<Status> = _status.asStateFlow()
 
-    private var tts: OfflineTts? = null
+    private val lock = Any()
+    private val prepareMutex = Mutex()
+    private val requestCounter = AtomicLong(0L)
+
+    @Volatile private var tts: OfflineTts? = null
+    @Volatile private var requestId: Long = 0L
+    @Volatile private var speakingNow: Boolean = false
+
     private var prepareJob: Job? = null
     private var speakJob: Job? = null
-    private var track: AudioTrack? = null
-    private val stopped = AtomicBoolean(false)
+    private var activeTrack: AudioTrack? = null
+    private var focusRequest: AudioFocusRequest? = null
 
     @Volatile var volume: Float = 1.0f
     @Volatile var speed: Float = 1.0f
@@ -58,46 +71,49 @@ class TextToSpeechManager(
     var onDone: (() -> Unit)? = null
     var onError: ((String) -> Unit)? = null
 
-    val isSpeaking: Boolean get() = speakJob?.isActive == true
+    val isSpeaking: Boolean get() = speakingNow
 
     fun prepare() {
         if (tts != null || prepareJob?.isActive == true) return
         prepareJob = scope.launch(Dispatchers.IO) {
             try {
-                _status.value = Status.Loading
-                val dir = LocalModelStore.ensureTts(context) { }
-                val onnx = File(dir, "pt_BR-faber-medium.onnx")
-                val tokens = File(dir, "tokens.txt")
-                val dataDir = File(dir, "espeak-ng-data")
-                if (!onnx.exists() || !tokens.exists() || !dataDir.exists()) {
-                    throw IllegalStateException("Arquivos da voz pt-BR não foram encontrados.")
-                }
-                val vits = OfflineTtsVitsModelConfig(
-                    model = onnx.absolutePath,
-                    lexicon = "",
-                    tokens = tokens.absolutePath,
-                    dataDir = dataDir.absolutePath,
-                    dictDir = "",
-                )
-                val config = OfflineTtsConfig(
-                    model = OfflineTtsModelConfig(
-                        vits = vits,
-                        numThreads = 2,
-                        debug = false,
+                prepareMutex.withLock {
+                    if (tts != null) return@withLock
+                    _status.value = Status.Loading
+                    val dir = LocalModelStore.ensureTts(context)
+                    val onnx = File(dir, "pt_BR-faber-medium.onnx")
+                    val tokens = File(dir, "tokens.txt")
+                    val dataDir = File(dir, "espeak-ng-data")
+                    if (!onnx.exists() || !tokens.exists() || !dataDir.exists()) {
+                        throw IllegalStateException("Arquivos da voz pt-BR não foram encontrados.")
+                    }
+                    val vits = OfflineTtsVitsModelConfig(
+                        model = onnx.absolutePath,
+                        lexicon = "",
+                        tokens = tokens.absolutePath,
+                        dataDir = dataDir.absolutePath,
+                        dictDir = "",
                     )
-                )
-                // sherpa-onnx expects a null AssetManager when model files are
-                // absolute paths on the filesystem. The Kotlin constructor is
-                // typed non-null, but the JNI layer supports null explicitly.
-                val constructor = OfflineTts::class.java.getConstructor(
-                    android.content.res.AssetManager::class.java,
-                    OfflineTtsConfig::class.java,
-                )
-                val engine = constructor.newInstance(null, config) as OfflineTts
-                tts = engine
-                _status.value = Status.Ready(engine.sampleRate())
+                    val config = OfflineTtsConfig(
+                        model = OfflineTtsModelConfig(
+                            vits = vits,
+                            numThreads = 2,
+                            debug = false,
+                        )
+                    )
+                    // O sherpa-onnx aceita AssetManager nulo quando os
+                    // caminhos são absolutos no sistema de arquivos.
+                    val constructor = OfflineTts::class.java.getConstructor(
+                        android.content.res.AssetManager::class.java,
+                        OfflineTtsConfig::class.java,
+                    )
+                    val engine = constructor.newInstance(null, config) as OfflineTts
+                    tts = engine
+                    _status.value = Status.Ready(engine.sampleRate())
+                    Log.i(TAG, "modelo de voz local carregado (${engine.sampleRate()} Hz)")
+                }
             } catch (t: Throwable) {
-                Log.e(TAG, "TTS init failed", t)
+                Log.e(TAG, "falha ao iniciar TTS", t)
                 tts = null
                 _status.value = Status.Error(t.message ?: "Falha ao iniciar a voz local.")
                 main.post { onError?.invoke("Não foi possível iniciar a voz local.") }
@@ -106,50 +122,57 @@ class TextToSpeechManager(
     }
 
     fun speak(text: String) {
-        val clean = text.trim()
+        val clean = sanitizeForSpeech(text)
         if (clean.isEmpty()) return
-        stop()
-        stopped.set(false)
+
+        // Invalida qualquer fala anterior antes de agendar a nova.
+        val myId = requestCounter.incrementAndGet()
+        synchronized(lock) { requestId = myId }
+        cancelPlayback()
+
         speakJob = scope.launch(Dispatchers.IO) {
             try {
-                val engine = ensureEngine() ?: return@launch
+                val engine = ensureEngine(myId) ?: return@launch
+                if (myId != requestId) return@launch
                 val audio = engine.generate(clean, 0, speed.coerceIn(0.5f, 1.8f))
-                if (stopped.get()) return@launch
+                if (myId != requestId) return@launch
                 val samples = audio.samples
                 if (samples.isEmpty()) {
                     throw IllegalStateException("A síntese não gerou áudio.")
                 }
-                play(samples, audio.sampleRate)
+                play(samples, audio.sampleRate, myId)
+            } catch (_: CancellationException) {
+                // Uma fala mais nova substituiu esta.
             } catch (t: Throwable) {
-                if (!stopped.get()) {
-                    Log.e(TAG, "speak failed", t)
+                if (myId == requestId) {
+                    Log.e(TAG, "falha ao falar", t)
+                    speakingNow = false
                     main.post { onError?.invoke("Não foi possível reproduzir a voz: ${t.message}") }
                 }
             }
         }
     }
 
-    private suspend fun ensureEngine(): OfflineTts? {
-        if (tts != null) return tts
+    private suspend fun ensureEngine(myId: Long): OfflineTts? {
+        tts?.let { return it }
         prepare()
-        // Wait for preparation without blocking the caller thread.
-        val deadline = SystemClock.elapsedRealtime() + 20_000
+        val deadline = SystemClock.elapsedRealtime() + 25_000L
         while (tts == null && SystemClock.elapsedRealtime() < deadline) {
-            when (val s = _status.value) {
+            if (myId != requestId) return null
+            when (_status.value) {
                 is Status.Error -> return null
-                else -> kotlinx.coroutines.delay(50)
+                else -> delay(50)
             }
         }
         return tts
     }
 
-    private fun play(samples: FloatArray, sampleRate: Int) {
+    private fun play(samples: FloatArray, sampleRate: Int, myId: Long) {
+        if (myId != requestId) return
         val pcm = ShortArray(samples.size)
         for (i in samples.indices) {
-            val value = (samples[i].coerceIn(-1f, 1f) * 32767f).toInt()
-            pcm[i] = value.toShort()
+            pcm[i] = (samples[i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
         }
-        val bytes = pcm.size * 2
         val attributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_ASSISTANT)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
@@ -159,69 +182,131 @@ class TextToSpeechManager(
             .setSampleRate(sampleRate)
             .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
             .build()
-        val audioTrack = AudioTrack.Builder()
+        val track = AudioTrack.Builder()
             .setAudioAttributes(attributes)
             .setAudioFormat(format)
-            .setBufferSizeInBytes(maxOf(bytes, 32768))
+            .setBufferSizeInBytes(maxOf(pcm.size * 2, 32768))
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
-        track = audioTrack
-        val focusManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
             .setAudioAttributes(attributes)
             .setOnAudioFocusChangeListener { }
             .build()
+        synchronized(lock) {
+            if (myId != requestId) {
+                track.release()
+                return
+            }
+            activeTrack = track
+            focusRequest = focus
+        }
         try {
-            focusManager.requestAudioFocus(request)
-            audioTrack.setVolume(volume.coerceIn(0f, 1f))
-            audioTrack.play()
-            main.post { onStart?.invoke() }
+            audioManager.requestAudioFocus(focus)
+            track.setVolume(volume.coerceIn(0f, 1f))
+            track.play()
+            speakingNow = true
+            main.post { if (myId == requestId) onStart?.invoke() }
+
             var offset = 0
             val chunk = 2048
-            while (offset < pcm.size && !stopped.get()) {
-                val count = minOf(chunk, pcm.size - offset)
-                val written = audioTrack.write(pcm, offset, count)
-                if (written < 0) throw IllegalStateException("Falha ao escrever áudio (código $written).")
+            while (offset < pcm.size) {
+                if (myId != requestId) return
+                val written = track.write(pcm, offset, minOf(chunk, pcm.size - offset))
+                if (written < 0) {
+                    throw IllegalStateException("Falha ao escrever áudio (código $written).")
+                }
                 offset += written
             }
-            val framesLeft = pcm.size - audioTrack.playbackHeadPosition
-            val waitMs = if (sampleRate > 0) (framesLeft * 1000L / sampleRate) else 0L
-            var waited = 0L
-            while (waited < waitMs && !stopped.get()) {
-                Thread.sleep(40)
-                waited += 40
+            val expectedMs = pcm.size * 1000L / sampleRate.coerceAtLeast(1)
+            val deadline = SystemClock.elapsedRealtime() + expectedMs + 2_000L
+            while (myId == requestId &&
+                track.playbackHeadPosition < pcm.size &&
+                SystemClock.elapsedRealtime() < deadline
+            ) {
+                Thread.sleep(30L)
             }
-            if (!stopped.get()) main.post { onDone?.invoke() }
+            if (myId == requestId) {
+                speakingNow = false
+                main.post {
+                    if (myId == requestId) onDone?.invoke()
+                }
+            }
         } finally {
-            try { audioTrack.stop() } catch (_: Throwable) {}
-            try { audioTrack.release() } catch (_: Throwable) {}
-            track = null
-            focusManager.abandonAudioFocusRequest(request)
+            synchronized(lock) {
+                if (activeTrack === track) activeTrack = null
+                if (focusRequest === focus) focusRequest = null
+            }
+            try { track.pause() } catch (_: Throwable) {}
+            try { track.flush() } catch (_: Throwable) {}
+            try { track.stop() } catch (_: Throwable) {}
+            try { track.release() } catch (_: Throwable) {}
+            try { audioManager.abandonAudioFocusRequest(focus) } catch (_: Throwable) {}
+        }
+    }
+
+    private fun cancelPlayback() {
+        val track: AudioTrack?
+        val focus: AudioFocusRequest?
+        synchronized(lock) {
+            track = activeTrack
+            focus = focusRequest
+            activeTrack = null
+            focusRequest = null
+        }
+        speakJob?.cancel()
+        speakJob = null
+        speakingNow = false
+        if (track != null) {
+            try { track.pause() } catch (_: Throwable) {}
+            try { track.flush() } catch (_: Throwable) {}
+            try { track.stop() } catch (_: Throwable) {}
+            try { track.release() } catch (_: Throwable) {}
+        }
+        if (focus != null) {
+            try {
+                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                audioManager.abandonAudioFocusRequest(focus)
+            } catch (_: Throwable) {}
         }
     }
 
     fun stop() {
-        stopped.set(true)
-        speakJob?.cancel()
-        speakJob = null
-        try {
-            track?.pause()
-            track?.flush()
-            track?.stop()
-            track?.release()
-        } catch (_: Throwable) {
-        }
-        track = null
+        requestCounter.incrementAndGet()
+        cancelPlayback()
     }
 
     fun release() {
         stop()
-        tts?.release()
+        prepareJob?.cancel()
+        prepareJob = null
+        try { tts?.release() } catch (_: Throwable) {}
         tts = null
         _status.value = Status.NotReady
     }
 
     companion object {
         private const val TAG = "BmoTts"
+
+        /**
+         * Remove markdown, URLs, emojis e símbolos que o Piper tentaria
+         * pronunciar. Mantém letras, números e pontuação de fala.
+         */
+        fun sanitizeForSpeech(input: String): String {
+            var text = input
+            text = Regex("(?s)```.*?```").replace(text, " ")
+            text = Regex("`([^`]*)`").replace(text, "$1")
+            text = Regex("!\\[([^]]*)]\\([^)]*\\)").replace(text, "$1")
+            text = Regex("\\[([^]]*)]\\([^)]*\\)").replace(text, "$1")
+            text = Regex("https?://\\S+").replace(text, " ")
+            text = Regex("<[^>]+>").replace(text, " ")
+            text = Regex("[\\uD800-\\uDFFF\\uFE0F\\u200D\\u2600-\\u27BF]").replace(text, " ")
+            text = Regex("\\p{So}").replace(text, " ")
+            text = Regex("[*_#>`~^|]+").replace(text, " ")
+            text = text.replace('\u00A0', ' ')
+            text = Regex("\\s+").replace(text, " ").trim()
+            // Evita pedidos gigantes de síntese em respostas anormais.
+            return if (text.length > 800) text.take(800).substringBeforeLast(' ') else text
+        }
     }
 }

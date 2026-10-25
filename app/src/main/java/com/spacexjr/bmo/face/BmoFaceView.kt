@@ -2,9 +2,11 @@ package com.spacexjr.bmo.face
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Handler
 import android.os.Looper
@@ -13,74 +15,79 @@ import android.util.AttributeSet
 import android.util.Log
 import android.util.LruCache
 import android.view.View
-import com.caverock.androidsvg.SVG
+import kotlin.math.max
 import kotlin.math.min
-import kotlin.random.Random
 
+/**
+ * Desenha os PNGs originais do BMO em tela cheia.
+ *
+ * O conteúdo nunca é redesenhado: os bitmaps são apenas decodificados,
+ * redimensionados proporcionalmente (center-crop) e alternados conforme o
+ * estado do assistente. O estado "falando" só é exibido enquanto existe áudio
+ * realmente sendo reproduzido.
+ */
 class BmoFaceView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
 ) : View(context, attrs) {
 
     private val assets = context.assets
-    private val renderer = SvgTemplateRenderer(assets)
     private val expressions = ExpressionManager(assets)
     private val handler = Handler(Looper.getMainLooper())
 
-    private val bitmapCache = object : LruCache<String, Bitmap>(16 * 1024 * 1024) {
+    private val bitmapCache = object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
 
-    private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG)
-    private val backgroundPaint = Paint().apply { color = Color.rgb(144, 229, 200) }
-    private val faceRect = RectF()
+    private val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG)
+    private val backgroundPaint = Paint().apply { color = BACKGROUND_COLOR }
+    private val destination = RectF()
+    private val source = Rect()
 
     private var currentState = BmoState.RESTING
-    private var defaultExpression = "neutral"
+    private var defaultExpression = "idle"
     private var faceScale = 1.0f
-    private var animation: FaceAnimation = expressions.animationFor(BmoState.RESTING)
+    private var animation = expressions.animationFor(BmoState.RESTING)
     private var currentBitmap: Bitmap? = null
     private var previousBitmap: Bitmap? = null
     private var transitionStart = 0L
     private var frameIndex = 0
-    private var direction = 1
-    private var lastFrameAt = 0L
-    private var transientUntil = 0L
     private var stopped = false
+    private var previewUntil = 0L
 
     private val frameRunnable = object : Runnable {
         override fun run() {
             if (stopped) return
             advanceFrame()
-            val delay = if (animation.fps > 0f) (1000f / animation.fps).toLong() else 1000L
-            handler.postDelayed(this, delay.coerceAtLeast(16L))
+            if (animation.frameDurationMs > 0L && animation.frames.size > 1) {
+                handler.postDelayed(this, animation.frameDurationMs)
+            }
         }
     }
 
     init {
+        setBackgroundColor(BACKGROUND_COLOR)
         setLayerType(LAYER_TYPE_HARDWARE, null)
-        setBackgroundColor(Color.rgb(144, 229, 200))
     }
 
     fun setState(state: BmoState) {
         if (stopped) return
         currentState = state
-        if (transientUntil == 0L || SystemClock.uptimeMillis() > transientUntil) {
+        if (SystemClock.uptimeMillis() >= previewUntil) {
             applyAnimation(expressions.animationFor(state, defaultExpression), crossfade = true)
         }
-        scheduleBlink()
     }
 
     fun setDefaultExpression(expression: String) {
-        defaultExpression = expression
-        if (currentState == BmoState.RESTING) {
+        defaultExpression = expressions.canonical(expression)
+        if (currentState == BmoState.RESTING && SystemClock.uptimeMillis() >= previewUntil) {
             applyAnimation(expressions.animationFor(currentState, defaultExpression), crossfade = true)
         }
     }
 
     fun setFaceScale(scale: Float) {
-        faceScale = scale.coerceIn(0.7f, 1.2f)
-        updateFaceRect()
+        faceScale = scale.coerceIn(0.75f, 1.2f)
+        updateDestination()
         invalidate()
     }
 
@@ -88,75 +95,79 @@ class BmoFaceView @JvmOverloads constructor(
 
     fun availableExpressions(): List<String> = expressions.availableExpressions()
 
-    fun testExpression(expression: String) {
-        val saved = currentState
+    fun labelFor(expression: String): String = expressions.labelFor(expression)
+
+    /** Mostra uma expressão por alguns segundos e depois volta ao estado real. */
+    fun previewExpression(expression: String, durationMs: Long = 3000L) {
+        if (stopped) return
+        previewUntil = SystemClock.uptimeMillis() + durationMs
         applyAnimation(expressions.animationForExpression(expression), crossfade = true)
-        currentState = saved
+        handler.postDelayed({
+            if (stopped) return@postDelayed
+            previewUntil = 0L
+            applyAnimation(expressions.animationFor(currentState, defaultExpression), crossfade = true)
+        }, durationMs)
+    }
+
+    /** Expressão estática usada pela pré-visualização das configurações. */
+    fun setPreviewExpression(expression: String) {
+        previewUntil = Long.MAX_VALUE
+        applyAnimation(expressions.animationForExpression(expression), crossfade = true)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        updateFaceRect()
+        updateDestination()
         bitmapCache.evictAll()
         currentBitmap = null
         previousBitmap = null
         applyAnimation(animation, crossfade = false)
     }
 
-    private fun updateFaceRect() {
-        val viewWidth = width.toFloat()
-        val viewHeight = height.toFloat()
-        if (viewWidth <= 0f || viewHeight <= 0f) return
-        var faceWidth = min(viewWidth * faceScale, viewHeight * 4f / 3f * faceScale)
-        var faceHeight = faceWidth * 3f / 4f
-        if (faceHeight > viewHeight * faceScale) {
-            faceHeight = viewHeight * faceScale
-            faceWidth = faceHeight * 4f / 3f
+    private fun updateDestination() {
+        if (width <= 0 || height <= 0) return
+        val viewRatio = width.toFloat() / height.toFloat()
+        val imageRatio = 800f / 480f
+        val baseWidth: Float
+        val baseHeight: Float
+        if (viewRatio > imageRatio) {
+            baseWidth = width.toFloat()
+            baseHeight = baseWidth / imageRatio
+        } else {
+            baseHeight = height.toFloat()
+            baseWidth = baseHeight * imageRatio
         }
-        val left = (viewWidth - faceWidth) / 2f
-        val top = (viewHeight - faceHeight) / 2f
-        faceRect.set(left, top, left + faceWidth, top + faceHeight)
+        val drawWidth = baseWidth * faceScale
+        val drawHeight = baseHeight * faceScale
+        val left = (width - drawWidth) / 2f
+        val top = (height - drawHeight) / 2f
+        destination.set(left, top, left + drawWidth, top + drawHeight)
     }
 
     private fun applyAnimation(next: FaceAnimation, crossfade: Boolean) {
         handler.removeCallbacks(frameRunnable)
         animation = next
         frameIndex = 0
-        direction = 1
-        lastFrameAt = 0L
-        transientUntil = 0L
-        showFrame(animation.frames.first(), crossfade)
-        if (animation.mode != FaceAnimation.Mode.STATIC && animation.frames.size > 1) {
-            handler.postDelayed(frameRunnable, (1000f / animation.fps).toLong().coerceAtLeast(16L))
+        showFrame(animation.frames.firstOrNull(), crossfade)
+        if (animation.frames.size > 1 && animation.frameDurationMs > 0L) {
+            handler.postDelayed(frameRunnable, animation.frameDurationMs)
         }
     }
 
     private fun advanceFrame() {
         if (animation.frames.size <= 1) return
-        when (animation.mode) {
-            FaceAnimation.Mode.LOOP -> frameIndex = (frameIndex + 1) % animation.frames.size
-            FaceAnimation.Mode.PINGPONG -> {
-                frameIndex += direction
-                if (frameIndex >= animation.frames.size - 1) {
-                    frameIndex = animation.frames.size - 1
-                    direction = -1
-                } else if (frameIndex <= 0) {
-                    frameIndex = 0
-                    direction = 1
-                }
-            }
-            FaceAnimation.Mode.ONCE -> {
-                if (frameIndex >= animation.frames.size - 1) return
-                frameIndex++
-            }
-            FaceAnimation.Mode.STATIC -> return
+        frameIndex = if (animation.loop) {
+            (frameIndex + 1) % animation.frames.size
+        } else {
+            min(frameIndex + 1, animation.frames.size - 1)
         }
         showFrame(animation.frames[frameIndex], crossfade = false)
     }
 
-    private fun showFrame(frame: FaceFrame, crossfade: Boolean) {
-        val bitmap = renderFrame(frame) ?: return
-        if (crossfade && currentBitmap != null && currentBitmap !== bitmap && !stopped) {
+    private fun showFrame(assetPath: String?, crossfade: Boolean) {
+        if (assetPath == null) return
+        val bitmap = decode(assetPath) ?: return
+        if (crossfade && currentBitmap != null && currentBitmap !== bitmap) {
             previousBitmap = currentBitmap
             transitionStart = SystemClock.uptimeMillis()
         } else {
@@ -166,65 +177,20 @@ class BmoFaceView @JvmOverloads constructor(
         invalidate()
     }
 
-    private fun showTransient(asset: String, durationMs: Long) {
-        if (stopped) return
-        val bitmap = renderFrame(FaceFrame(asset)) ?: return
-        previousBitmap = currentBitmap
-        transitionStart = SystemClock.uptimeMillis()
-        currentBitmap = bitmap
-        transientUntil = SystemClock.uptimeMillis() + durationMs
-        invalidate()
-        handler.postDelayed({
-            if (stopped) return@postDelayed
-            transientUntil = 0L
-            applyAnimation(expressions.animationFor(currentState, defaultExpression), crossfade = true)
-        }, durationMs)
-    }
-
-    private fun renderFrame(frame: FaceFrame): Bitmap? {
-        val targetWidth = faceRect.width().toInt().coerceAtLeast(1)
-        val targetHeight = faceRect.height().toInt().coerceAtLeast(1)
-        val key = buildString {
-            append(frame.asset)
-            frame.params.toSortedMap().forEach { (k, v) -> append('|').append(k).append('=').append(v) }
-            append('|').append(targetWidth).append('x').append(targetHeight)
-        }
-        bitmapCache.get(key)?.let { return it }
+    private fun decode(path: String): Bitmap? {
+        bitmapCache.get(path)?.let { return it }
         return try {
-            val svgText = if (frame.params.isEmpty()) {
-                renderer.raw(frame.asset)
+            val bitmap = assets.open(path).use { BitmapFactory.decodeStream(it) }
+            if (bitmap == null) {
+                Log.e(TAG, "PNG inválido ou ausente: $path")
+                null
             } else {
-                renderer.render(frame.asset, frame.params)
+                bitmapCache.put(path, bitmap)
+                bitmap
             }
-            val svg = SVG.getFromString(svgText)
-            svg.setDocumentWidth(targetWidth.toString())
-            svg.setDocumentHeight(targetHeight.toString())
-            val bitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-            canvas.drawColor(Color.rgb(144, 229, 200))
-            svg.renderToCanvas(canvas)
-            bitmapCache.put(key, bitmap)
-            bitmap
         } catch (t: Throwable) {
-            Log.e(TAG, "Falha ao renderizar ${frame.asset}", t)
+            Log.e(TAG, "Falha ao abrir $path", t)
             null
-        }
-    }
-
-    private fun scheduleBlink() {
-        handler.removeCallbacks(blinkRunnable)
-        if (currentState != BmoState.RESTING) return
-        handler.postDelayed(blinkRunnable, Random.nextLong(4_500L, 8_500L))
-    }
-
-    private val blinkRunnable = object : Runnable {
-        override fun run() {
-            if (stopped || currentState != BmoState.RESTING) return
-            if (expressions.has("blink")) {
-                showTransient("blink", 120L)
-            } else {
-                scheduleBlink()
-            }
         }
     }
 
@@ -233,17 +199,29 @@ class BmoFaceView @JvmOverloads constructor(
         val current = currentBitmap ?: return
         val previous = previousBitmap
         if (previous != null) {
-            val progress = ((SystemClock.uptimeMillis() - transitionStart) / 140f).coerceIn(0f, 1f)
-            bitmapPaint.alpha = ((1f - progress) * 255).toInt()
-            canvas.drawBitmap(previous, null, faceRect, bitmapPaint)
-            bitmapPaint.alpha = (progress * 255).toInt()
-            canvas.drawBitmap(current, null, faceRect, bitmapPaint)
-            bitmapPaint.alpha = 255
+            val progress = ((SystemClock.uptimeMillis() - transitionStart) / 150f).coerceIn(0f, 1f)
+            paint.alpha = ((1f - progress) * 255f).toInt()
+            drawBitmap(canvas, previous)
+            paint.alpha = (progress * 255f).toInt()
+            drawBitmap(canvas, current)
+            paint.alpha = 255
             if (progress < 1f) postInvalidateOnAnimation()
         } else {
-            bitmapPaint.alpha = 255
-            canvas.drawBitmap(current, null, faceRect, bitmapPaint)
+            paint.alpha = 255
+            drawBitmap(canvas, current)
         }
+    }
+
+    private fun drawBitmap(canvas: Canvas, bitmap: Bitmap) {
+        source.set(0, 0, bitmap.width, bitmap.height)
+        canvas.drawBitmap(bitmap, source, destination, paint)
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        stopped = false
+        updateDestination()
+        applyAnimation(expressions.animationFor(currentState, defaultExpression), crossfade = false)
     }
 
     override fun onDetachedFromWindow() {
@@ -255,15 +233,8 @@ class BmoFaceView @JvmOverloads constructor(
         super.onDetachedFromWindow()
     }
 
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
-        stopped = false
-        updateFaceRect()
-        applyAnimation(expressions.animationFor(currentState, defaultExpression), crossfade = false)
-        scheduleBlink()
-    }
-
     companion object {
         private const val TAG = "BmoFaceView"
+        private val BACKGROUND_COLOR = Color.rgb(189, 255, 203)
     }
 }

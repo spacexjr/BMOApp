@@ -26,7 +26,6 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.spacexjr.bmo.databinding.ActivityMainBinding
 import com.spacexjr.bmo.face.BmoState
 import kotlinx.coroutines.launch
-import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
@@ -115,8 +114,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val repo = app.settingsRepository
             if (repo.get().modelPath.isBlank()) {
-                val fallback = File(getExternalFilesDir(null), "models/Qwen3-0.6B-Q8_0.gguf")
-                if (fallback.exists()) {
+                repo.findLocalModel(this@MainActivity)?.let { fallback ->
                     repo.setModelPath(fallback.absolutePath)
                     assistant.updateSettings(repo.get())
                 }
@@ -126,6 +124,7 @@ class MainActivity : AppCompatActivity() {
             } else {
                 showStatus("Modelo não carregado · toque e segure no rosto para configurar")
             }
+            assistant.prepareEngines()
         }
     }
 

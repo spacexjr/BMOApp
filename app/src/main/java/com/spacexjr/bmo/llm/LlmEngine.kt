@@ -107,6 +107,8 @@ class LlmEngine {
 
     private var loadedSearchPath: String = ""
     private var loadedTemplate: String = ""
+    private var loadedContextSize: Int = 0
+    private var loadedThreads: Int = 0
 
     val isLoaded: Boolean get() = bridge.isLoaded
 
@@ -147,6 +149,17 @@ class LlmEngine {
                 val error = ModelStatus.Error(it)
                 _status.value = error
                 return@withContext Result.failure(IllegalStateException(it))
+            }
+            // Evita descarregar e recarregar centenas de MB quando a
+            // atividade é recriada com o mesmo modelo e os mesmos parâmetros.
+            val current = _status.value
+            if (bridge.isLoaded &&
+                current is ModelStatus.Ready &&
+                path == loadedSearchPath &&
+                contextSize == loadedContextSize &&
+                threads == loadedThreads
+            ) {
+                return@withContext Result.success(current)
             }
             unloadInternal()
             _status.value = ModelStatus.Loading

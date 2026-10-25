@@ -2,6 +2,7 @@
 #include <android/log.h>
 
 #include <algorithm>
+#include <chrono>
 #include <atomic>
 #include <cstring>
 #include <mutex>
@@ -255,6 +256,7 @@ Java_com_spacexjr_bmo_llm_LlamaCppBridge_nativeGenerate(
     }
     LOGI("prompt tokens=%d (cache %d, reuse %d), n_batch=%d, n_ctx=%d",
          n_tokens, cached_size, common, batch_size, n_ctx);
+    const auto promptStart = std::chrono::steady_clock::now();
     if (!decode_prompt(engine, tokens, common, batch_size)) {
         if (engine->cancel.load()) {
             jni_throw(env, "Geração cancelada.");
@@ -264,6 +266,8 @@ Java_com_spacexjr_bmo_llm_LlamaCppBridge_nativeGenerate(
         return nullptr;
     }
     engine->cache_tokens = tokens;
+    const auto promptMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - promptStart).count();
 
     auto * chain = llama_sampler_chain_init(llama_sampler_chain_default_params());
     llama_sampler_chain_add(chain, llama_sampler_init_top_k(top_k > 0 ? top_k : 40));
@@ -272,6 +276,8 @@ Java_com_spacexjr_bmo_llm_LlamaCppBridge_nativeGenerate(
     llama_sampler_chain_add(chain, llama_sampler_init_dist(static_cast<uint32_t>(seed)));
 
     std::string result;
+    const auto generateStart = std::chrono::steady_clock::now();
+    int generated = 0;
     const int limit = std::min(max_tokens > 0 ? max_tokens : 96, n_ctx - n_tokens - 1);
     for (int i = 0; i < limit; ++i) {
         if (engine->cancel.load(std::memory_order_relaxed)) break;
@@ -289,6 +295,7 @@ Java_com_spacexjr_bmo_llm_LlamaCppBridge_nativeGenerate(
             }
         }
 
+        generated++;
         llama_batch next = llama_batch_init(1, 0, 1);
         if (next.token == nullptr) break;
         next.token[0] = id;
@@ -304,6 +311,10 @@ Java_com_spacexjr_bmo_llm_LlamaCppBridge_nativeGenerate(
     }
 
     llama_sampler_free(chain);
+    const auto generateMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - generateStart).count();
+    LOGI("prompt eval %lld ms, geração %d tokens em %lld ms",
+         static_cast<long long>(promptMs), generated, static_cast<long long>(generateMs));
 
     if (engine->cancel.load()) {
         engine->cancel.store(false, std::memory_order_relaxed);

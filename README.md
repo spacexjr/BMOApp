@@ -1,489 +1,290 @@
-# BMOApp
+# BMO App
 
-Aplicativo Android offline do BMO (inspirado em *Adventure Time*), feito para rodar
-localmente no **Samsung Galaxy A22 (SM-A225M)**. A conversa, o reconhecimento de
-voz, a síntese de voz e a palavra de ativação funcionam no próprio aparelho, sem
-enviar áudio ou texto para servidores.
+Aplicativo Android nativo e **offline** do BMO (inspirado em *Adventure Time*),
+feito para o **Samsung Galaxy A22 4G (SM-A225M, arm64-v8a)**.
 
-O app usa o modelo **Qwen3-0.6B-Q8_0** via llama.cpp (JNI), **Vosk** para ASR em
-português brasileiro, **sherpa-onnx + Piper VITS** para TTS e os SVGs originais do
-BMO para as expressões faciais.
+Conversa por texto ou voz, reconhecimento de fala, síntese de voz, palavra de
+ativação e ações do aparelho acontecem **no próprio celular**. O aplicativo não
+possui permissão de internet e não envia áudio, texto ou histórico para
+servidores.
 
-> **Importante:** o modelo de linguagem GGUF **não está incluído no APK**.
-> Ele precisa ser copiado para o aparelho uma única vez. Os modelos de voz
-> (Vosk e Piper) já estão empacotados no APK e são extraídos automaticamente.
-
----
-
-## Estado do projeto
-
-Implementado e compilando:
-
-- Interface em paisagem, com fundo `#90E5C8`.
-- Rosto animado usando 40 SVGs existentes em `app/src/main/assets/faces`.
-- Conversa por texto e por voz.
-- Inferência real com llama.cpp em `arm64-v8a`.
-- ASR offline com Vosk `vosk-model-small-pt-0.3`.
-- TTS offline com Piper `pt_BR-faber-medium`.
-- Palavra de ativação “Ei, BMO” com Vosk + gate de silêncio RMS.
-- Ações permitidas do Android (hora, data, abrir app, configurações, bateria,
-  informações do aparelho, volume, lista de apps e lanterna).
-- Configurações persistentes e diagnóstico em tela.
-- Cancelamento de geração/fala/escuta.
-
-Validado no Galaxy A22 SM-A225M:
-
-- Build e instalação do APK.
-- Carregamento do Qwen3 e conversa por texto.
-- Reconhecimento de fala e síntese de voz.
-- Tela de configurações, orientação em paisagem, cor de fundo e envio pelo teclado.
-- Cache de prefixo do prompt entre turnos (reuso do KV cache).
-
-Ainda vale testar em uso real, com o aparelho na mão:
-
-- Todas as ações individuais (abrir apps, lanterna, volume etc.).
-- Palavra de ativação em ambiente silencioso e com ruído.
-- Transições de microfone entre wake word, ASR e TTS.
-- Rolagem e ajustes finos da tela de configurações em paisagem.
-
-### Problemas conhecidos em aberto
-
-- **Demora para pensar e responder.** No Galaxy A22, a primeira resposta pode
-  levar em torno de 30 segundos ou mais, e respostas seguintes ainda podem
-  demorar bastante, dependendo do tamanho do contexto, do número de tokens e da
-  velocidade de geração. A fala só começa depois que o texto inteiro é gerado.
-- **Fala repetindo a resposta anterior.** Em alguns testes, a síntese de voz
-  reproduziu a resposta do turno anterior em vez da resposta atual. Esse
-  comportamento ainda precisa ser corrigido no fluxo de TTS.
-- **Emoji narrado.** O texto enviado ao TTS ainda contém emojis, e o Piper tenta
-  pronunciá-los ou descrevê-los em vez de ignorá-los. A correção prevista é
-  remover emojis e símbolos antes da síntese.
+- Pacote: `com.spacexjr.bmo`
+- Versão: `2.0.0` (`versionCode 2`)
+- Interface: paisagem, imersiva, pt-BR
+- Android mínimo: 8.0 (API 26); alvo: API 34
+- ABIs: somente `arm64-v8a`
 
 ---
 
-## Funcionalidades
+## Componentes reais
 
-### Conversa
+| Função | Implementação |
+|---|---|
+| Modelo de linguagem | Qwen2.5-0.5B-Instruct GGUF via llama.cpp/JNI |
+| Reconhecimento de fala | Vosk `vosk-model-small-pt-0.3`, embarcado no APK |
+| Detecção de fala | Resultados parciais/finais do Vosk (sem limiar de volume) |
+| Síntese de voz | Piper VITS pt-BR Faber via sherpa-onnx, embarcado no APK |
+| Palavra de ativação | Experimental: gramática “ei bmo” no Vosk (limitada pelo vocabulário) |
+| Rostos | PNGs originais do projeto `be-more-agent`, sem redesenho |
+| Ações | Lista permitida de APIs Android; sem root e sem shell |
 
-- **Toque no rosto:** começa a ouvir; se estiver falando, interrompe a fala;
-  se estiver ouvindo, para a escuta.
-- **Toque duplo:** cancela geração, fala e escuta em andamento.
-- **Toque longo:** abre as configurações.
-- **Ícone de teclado:** abre o diálogo de conversa por texto. No teclado, a tecla
-  de ação (Enter/Enviar) envia a mensagem.
-- **Ícone de engrenagem:** abre as configurações.
-
-As respostas são faladas quando a síntese de voz está habilitada. Se o microfone
-não tiver permissão, o app solicita a permissão ao tocar no rosto.
-
-### Expressões faciais
-
-As expressões são os SVGs originais do BMO, renderizados com AndroidSVG. O app
-não redesenha os rostos: ele apenas substitui os parâmetros usados pelos templates
-originais (`.m`, `.x`, `.t`) e alterna entre os estados disponíveis. Há expressões
-para neutro, feliz, triste, bravo, pensando, ouvindo, falando, dormindo, entre
-outras.
-
-### Voz
-
-- **ASR:** Vosk pt-BR local, com detecção de início/fim de fala e timeouts.
-- **TTS:** Piper VITS pt-BR Faber, executado no aparelho.
-- **Velocidade e volume** da fala ajustáveis nas configurações.
-- **Testar voz** e **Parar fala** disponíveis na tela de configurações.
-
-### Palavra de ativação
-
-Com a opção ativada, o app escuta “Ei, BMO” enquanto está em primeiro plano.
-Variantes aceitas incluem “ei bmo”, “eibmo”, “hey bmo”, “oi bmo” e “ei bemo”.
-O detector usa uma gramática restrita do Vosk e um gate de RMS para reduzir CPU.
-
-### Ações do Android
-
-O modelo só pode pedir as ações abaixo. Não existe shell, root, execução de código
-arbitrário ou acesso genérico ao sistema.
-
-| Ação | O que faz |
-| --- | --- |
-| `get_current_time` | Retorna a hora local. |
-| `get_current_date` | Retorna a data local. |
-| `open_application` | Abre um app instalado pelo nome ou pacote. |
-| `open_system_settings` | Abre uma tela de configurações do Android. |
-| `get_battery_status` | Retorna nível e estado da bateria. |
-| `get_device_info` | Retorna modelo, versão do Android e arquitetura. |
-| `set_media_volume` | Ajusta o volume de mídia entre 0 e 100. |
-| `list_installed_apps` | Lista apps com ícone na tela inicial. |
-| `set_flashlight` | Liga ou desliga a lanterna, quando disponível. |
-
-As ferramentas retornam resultado real. Se uma ação falhar (por exemplo, um app
-inexistente ou uma lanterna indisponível), o BMO informa a falha em vez de fingir
-que executou.
+O APK **não inclui o modelo GGUF** de linguagem. Os modelos de voz Vosk e Piper
+já estão dentro do APK e são extraídos automaticamente no primeiro uso.
 
 ---
 
-## Privacidade e funcionamento offline
+## Rostos originais
 
-- O APK **não declara a permissão `INTERNET`**.
-- Áudio e texto não são enviados para nuvem.
-- Nenhum modelo é baixado automaticamente.
-- O modelo GGUF é lido do armazenamento local do aparelho.
-- Os modelos de voz ficam dentro do APK e são extraídos para o armazenamento
-  privado do app na primeira execução.
-- O app não usa serviços de ASR/TTS do Google.
+Os 12 quadros usados vieram de `faces/` do projeto original e estão em
+`app/src/main/assets/faces/`:
 
----
-
-## Requisitos
-
-### Aparelho
-
-- Android 8.0 (API 26) ou superior.
-- Arquitetura **arm64-v8a** (o APK contém apenas essa ABI).
-- Microfone.
-- Espaço livre:
-  - cerca de **220 MB** no armazenamento privado para extrair os modelos de voz;
-  - cerca de **610 MB** para o modelo Qwen3-0.6B-Q8_0;
-  - espaço adicional para o APK (aproximadamente 145 MB em debug).
-
-Testado no Samsung Galaxy A22 SM-A225M, Android 16.
-
-### Ambiente de build
-
-- Linux (o projeto foi compilado em Linux).
-- JDK 17 ou 21 (testado com JDK 21).
-- Android SDK com:
-  - `platforms;android-34`
-  - `build-tools;34.0.0`
-  - `ndk;27.2.12479018`
-  - `cmake;3.22.1`
-- Gradle 8.7 (o wrapper baixa automaticamente).
-- AGP 8.2.2 e Kotlin 1.9.22.
-
-Instalação dos componentes do SDK, se necessário:
-
-```bash
-sdkmanager --install \
-  "platforms;android-34" \
-  "build-tools;34.0.0" \
-  "ndk;27.2.12479018" \
-  "cmake;3.22.1"
+```text
+idle/       idle_01.png
+listening/  listen_01.png, listen_02.png
+thinking/   thinking_01.png ... thinking_04.png
+speaking/   speaking_01.png ... speaking_03.png
+error/      error_01.png
+warmup/     warmup_01.png
 ```
+
+`BmoFaceView` apenas decodifica, escala e alterna esses PNGs. O fundo é a cor
+original `#BDFFCB`. As expressões seguem o estado real do assistente:
+
+- `LISTENING`: microfone ativo ou fala detectada;
+- `THINKING`: inferência ou execução de ação em andamento;
+- `SPEAKING`: somente enquanto há áudio sendo reproduzido;
+- `ERROR` / `CONFUSED`: falha real de ASR, TTS ou modelo;
+- `RESTING`: expressão de repouso escolhida nas configurações.
+
+Não há câmera, fotografia, análise de imagens ou lanterna. Essas permissões e
+dependências foram removidas do manifesto e do código.
 
 ---
 
 ## Como compilar
 
-Na raiz do projeto:
+Requisitos:
+
+- JDK 21
+- Android SDK com API 34
+- NDK `27.2.12479018`
+- CMake `3.22.1`
+
+Exemplo no ambiente usado no desenvolvimento:
 
 ```bash
-export JAVA_HOME=/caminho/para/jdk-17-ou-21
-export ANDROID_HOME="$HOME/Android/Sdk"
-export PATH="$ANDROID_HOME/platform-tools:$PATH"
+export JAVA_HOME=/home/re/.jdks/jbr-21.0.11
+export PATH="$JAVA_HOME/bin:$PATH"
+export ANDROID_HOME=/home/re/Android/Sdk
 
 ./gradlew :app:assembleDebug --no-daemon
 ```
 
-O APK será gerado em:
+APK gerado:
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Para uma build de release:
-
-```bash
-./gradlew :app:assembleRelease --no-daemon
-```
-
-O projeto usa `local.properties` para apontar para o SDK. Se ele não existir:
-
-```properties
-sdk.dir=/home/SEU_USUARIO/Android/Sdk
-```
-
-### Observações de build
-
-- O llama.cpp é compilado a partir do código vendorizado em
-  `app/src/main/cpp/llama.cpp`.
-- A compilação usa `-DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod`, adequada ao A22.
-- A ABI é limitada a `arm64-v8a` para reduzir tamanho e complexidade.
-- O AAR do sherpa-onnx está fixado em **1.10.44** em `app/libs/`.
+O projeto nativo fica em `app/src/main/cpp/` (llama.cpp vendorizado + ponte JNI
+`bmo_jni.cpp`). O sherpa-onnx vem de `app/libs/sherpa-onnx-1.10.44.aar`.
 
 ---
 
-## Como instalar
-
-Com o aparelho conectado por USB e a depuração USB habilitada:
+## Instalação no aparelho
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n com.spacexjr.bmo/.MainActivity
 ```
 
-Na primeira abertura, o app pode levar alguns segundos para extrair os modelos de
-voz. A barra de status mostra o progresso.
+### Copiar o modelo GGUF
 
----
-
-## Modelo de linguagem (GGUF)
-
-O modelo esperado por padrão é:
+O arquivo usado nos testes foi:
 
 ```text
-Qwen3-0.6B-Q8_0.gguf
+qwen2.5-0.5b-instruct-q8_0-Q4_K_M-requant.gguf
 ```
 
-Caminho padrão no aparelho:
-
-```text
-/storage/emulated/0/Android/data/com.spacexjr.bmo/files/models/Qwen3-0.6B-Q8_0.gguf
-```
-
-### Opção 1: copiar via ADB
-
-Com o app já instalado (para o diretório existir):
+Copie-o para a pasta privada externa do app:
 
 ```bash
 adb shell mkdir -p /sdcard/Android/data/com.spacexjr.bmo/files/models
-adb push assets/models/Qwen3-0.6B-Q8_0.gguf \
+adb push qwen2.5-0.5b-instruct-q8_0-Q4_K_M-requant.gguf \
   /sdcard/Android/data/com.spacexjr.bmo/files/models/
 ```
 
-### Opção 2: importar pela interface
+Ao abrir o app, ele procura automaticamente um arquivo `.gguf` nessa pasta,
+dando prioridade a nomes com `qwen2.5`. Também é possível escolher outro GGUF em
+**Configurações → Inteligência artificial → Selecionar arquivo GGUF**. Nada é
+baixado automaticamente.
 
-1. Abra as configurações do BMO (engrenagem ou toque longo no rosto).
-2. Toque em **Selecionar arquivo GGUF**.
-3. Escolha o arquivo `.gguf` pelo seletor de arquivos do Android.
-4. O app copia o arquivo, valida o cabeçalho `GGUF` e carrega o modelo.
-
-Também é possível usar **Carregar / recarregar** e **Descarregar** na tela de
-configurações.
-
-O arquivo de origem do modelo neste repositório fica em
-`assets/models/Qwen3-0.6B-Q8_0.gguf` e **não é empacotado no APK**.
+> O modelo é carregado em memória e ocupa cerca de 0,5 GB de RAM, além do
+> contexto. O aparelho precisa ter espaço e memória livres.
 
 ---
 
-## Primeiro uso
+## Uso
 
-1. Instale o APK.
-2. Abra o BMO e aguarde a extração dos modelos de voz.
-3. Conceda a permissão de microfone quando solicitado.
-4. Copie ou importe o `Qwen3-0.6B-Q8_0.gguf`.
-5. Toque no rosto e fale, ou use o ícone de teclado para testar por texto.
-6. Se quiser a palavra de ativação, habilite-a nas configurações.
+- **Toque no rosto:** começa a ouvir; se estiver falando, interrompe a fala;
+  se estiver ouvindo, encerra a escuta.
+- **Toque duplo:** cancela geração, fala e escuta.
+- **Toque longo:** abre as configurações.
+- **Ícone de teclado:** abre a conversa por texto.
+- **Ícone de engrenagem:** abre as configurações.
 
-Na primeira resposta, o modelo precisa processar o prompt inicial, o que pode
-levar em torno de **30 segundos** no A22 com o contexto padrão. Depois disso, o
-cache de prefixo reutiliza o KV cache e as respostas tendem a ser mais rápidas.
+As respostas são faladas quando a síntese está ligada. O texto gerado é limpo
+antes do TTS: markdown, URLs, emojis e símbolos não são pronunciados.
+
+### Comandos diretos
+
+Alguns comandos explícitos não passam pelo modelo; executam a ação real e
+respondem com o resultado, reduzindo latência e evitando invenções:
+
+- “Que horas são?”
+- “Que dia é hoje?”
+- “Qual a bateria?”
+- “Qual é o aparelho?”
+- “Volume 40”
+- “Abrir Wi-Fi”, “abrir Bluetooth”, “abrir configurações de tela”
+- “Abrir WhatsApp”, “abrir Relógio”
+
+Outras frases seguem para o Qwen2.5, que pode solicitar uma ferramenta da lista
+permitida. Toda ação retorna sucesso ou uma mensagem de erro real; o app não
+finge que executou algo.
+
+Ações permitidas: hora, data, abrir aplicativo instalado, abrir uma tela de
+configurações do Android, bateria, informações do aparelho, volume de mídia e
+lista de apps. Não há shell, root, execução de código arbitrário, câmera,
+fotografia ou lanterna.
 
 ---
 
-## Configurações
+## Voz e detecção de fala
 
-As configurações ficam em `SharedPreferences` e são aplicadas em tempo real
-quando possível.
+1. O microfone grava PCM 16 kHz mono com `AudioRecord`.
+2. O **Vosk** transcreve continuamente.
+3. O início da fala é confirmado quando o Vosk devolve um texto parcial válido.
+4. O fim é confirmado pelo resultado final do Vosk ou por cerca de 1,1 s sem
+   novas hipóteses parciais.
+5. Se houver fala válida, o texto é enviado ao assistente.
+6. A resposta é sintetizada pelo Piper e reproduzida localmente.
 
-### Inteligência artificial
+Essa detecção usa o próprio reconhecedor, não um limiar de RMS. Isso melhora a
+captura de fala baixa e evita abrir o microfone por ruído alto isolado. Se o
+Vosk não reconhecer nenhuma palavra em 6 s, o app avisa e volta ao repouso.
 
-- Selecionar arquivo GGUF.
-- Carregar / recarregar e descarregar modelo.
-- Habilitar/desabilitar “Thinking” do Qwen3 (desabilitado por padrão).
-- Limite de tokens por resposta (16 a 256).
-- Tamanho do contexto (256 a 2048).
-- Threads de inferência (1 a 6).
+A palavra de ativação “Ei, BMO” também usa Vosk, com uma gramática restrita.
+Ela funciona **somente com o app aberto** (não há serviço em segundo plano) e
+não substitui um detector neural dedicado de wake word.
 
-Para o A22, **4 threads** é um bom ponto de partida. Contextos maiores consomem
-mais memória e aumentam o tempo de processamento.
+> **Limitação real:** o modelo `vosk-model-small-pt-0.3` não possui a palavra
+> “bmo” no vocabulário; o próprio Vosk registra que ignora esse termo ao montar
+> a gramática. Por isso o recurso está marcado como **experimental** e pode não
+> disparar. O toque no rosto e a conversa por texto são os métodos confiáveis.
+> O projeto original possui um `wakeword.onnx` do openWakeWord; integrá-lo ao
+> Android exigiria ONNX Runtime e o pipeline de mel-espectrograma/embedding.
 
-### Voz
+---
 
-- Permissão de microfone.
-- Reconhecimento de voz offline.
-- Síntese de voz offline.
-- Palavra de ativação “Ei, BMO”.
-- Velocidade da fala (50% a 180%).
-- Volume da voz (0% a 100%).
-- Testar voz / parar fala.
-- Conversa por texto para diagnóstico.
+## Configurações funcionais
 
-### Aparência
+- Modelo GGUF: selecionar, carregar/recarregar, descarregar e ver o caminho.
+- Contexto, limite de tokens, threads e quantidade de mensagens do histórico.
+- Apagar o histórico da conversa.
+- Reconhecimento de voz, síntese de voz e palavra de ativação.
+- Velocidade e volume da voz, teste de fala e botão para parar.
+- Expressão de repouso, prévia e escala do rosto.
+- Diagnóstico com versão, Android, aparelho, RAM, PSS, modelo, estado do ASR/TTS,
+  wake word e últimas mensagens de erro/latência.
 
-- Expressão facial padrão.
-- Escala do rosto (70% a 120%).
-- Prévia da expressão com o fundo `#90E5C8`.
+Alterações de contexto, threads ou modelo exigem **Carregar / recarregar** para
+valer no motor nativo. O app não recarrega o GGUF ao apenas voltar para a tela
+principal: se o caminho, o contexto e as threads não mudaram, o modelo já
+carregado é reutilizado.
 
-### Sistema
+---
 
-- Status do modelo, ASR, TTS e microfone.
-- Diagnóstico recente (últimos eventos).
-- Atalho para as permissões do aplicativo.
+## Privacidade e modo offline
+
+- O manifesto não solicita `INTERNET`.
+- Áudio, texto, histórico e modelo ficam no aparelho.
+- O histórico é mantido em memória e pode ser apagado.
+- Não há telemetria, conta, nuvem ou download automático.
+- O app depende apenas de permissões de microfone e ajuste de áudio.
+
+---
+
+## Testes realizados no Galaxy A22
+
+Aparelho: SM-A225M, Android 16/API 36, 720×1600, arm64-v8a.
+
+- Build `assembleDebug` e instalação via ADB.
+- Carregamento real do Qwen2.5 Q4_K_M pelo llama.cpp.
+- Conversa por texto com respostas em pt-BR e TTS Piper local.
+- Prompt de conversa reduzido para **68 tokens**.
+- Com 4 threads: avaliação do prompt em **~3,1–4,3 s** e geração curta em
+  **~0,3–1,0 s**; primeira resposta total em **~3,5–5,3 s**.
+- Com cache KV entre turnos: resposta seguinte em **~1,7–1,9 s**.
+- Comando direto “que horas são” executou `get_current_time` e respondeu
+  “Agora são 22:15”.
+- Vosk carregou, detectou fala pelo resultado parcial e transcreveu áudio
+  ambiente real; o app respondeu ao texto reconhecido.
+- TTS iniciou e concluiu a reprodução local.
+- Correção de fala antiga: cada pedido de TTS recebe um identificador; uma
+  síntese nova invalida a anterior e resultados atrasados são descartados.
+- Modelo já carregado é preservado ao voltar para a atividade.
+
+Também foi observado que o protótipo físico pode receber toques fantasmas do
+touchscreen/carcaça durante os testes. Isso não é gerado pelo app; quando um
+toque real chega ao rosto, o comportamento esperado é iniciar a escuta.
+
+---
+
+## Limitações atuais
+
+- **Latência:** a primeira resposta ainda leva alguns segundos, principalmente
+  pela avaliação do prompt no CPU do A22. A fala só começa após a geração do
+  texto completo; não há streaming de tokens para o TTS.
+- **Modelo pequeno:** o Qwen2.5-0.5B pode ignorar instruções de ferramenta ou
+  produzir respostas estranhas. Por isso os comandos de aparelho mais comuns têm
+  caminho direto determinístico.
+- **Palavra de ativação:** usa gramática Vosk, apenas com o app em primeiro
+  plano. O vocabulário do Vosk pequeno não contém “bmo”, então o recurso é
+  experimental e pode não disparar. Não foi validado em ambientes de ruído.
+- **Uma única voz:** o APK inclui apenas Piper pt-BR Faber; não há seletor
+  fictício de várias vozes.
+- **Sem serviço em segundo plano:** ao sair do app, escuta, fala e geração são
+  interrompidas.
+- **Sem câmera/fotografia/lanterna**, por decisão de escopo.
 
 ---
 
 ## Estrutura do projeto
 
 ```text
-BMOApp/
-├── app/
-│   ├── libs/
-│   │   └── sherpa-onnx-1.10.44.aar
-│   ├── src/main/
-│   │   ├── assets/
-│   │   │   ├── faces/              # 40 SVGs originais do BMO
-│   │   │   └── models/
-│   │   │       ├── tts-pt.zip      # Piper pt-BR Faber
-│   │   │       └── vosk-pt.zip     # Vosk small pt-BR
-│   │   ├── cpp/
-│   │   │   ├── bmo_jni.cpp         # JNI, llama.cpp e cache de prompt
-│   │   │   ├── CMakeLists.txt
-│   │   │   └── llama.cpp/          # llama.cpp vendorizado
-│   │   ├── java/com/spacexjr/bmo/
-│   │   │   ├── MainActivity.kt
-│   │   │   ├── SettingsActivity.kt
-│   │   │   ├── BmoAssistant.kt     # orquestração da conversa
-│   │   │   ├── actions/            # ações permitidas
-│   │   │   ├── data/               # preferências, modelos e diagnóstico
-│   │   │   ├── face/               # SVGs, estados e animação
-│   │   │   ├── llm/                # ponte Kotlin/JNI
-│   │   │   └── speech/             # ASR, TTS e wake word
-│   │   ├── res/
-│   │   └── AndroidManifest.xml
-│   └── build.gradle.kts
-├── assets/models/Qwen3-0.6B-Q8_0.gguf   # não empacotado
-├── build.gradle.kts
-├── gradle.properties
-├── settings.gradle.kts
-└── README.md
+app/src/main/java/com/spacexjr/bmo/
+  BmoApp.kt                    inicialização dos motores
+  MainActivity.kt              tela cheia, toques, diálogo de texto
+  SettingsActivity.kt          configurações e diagnóstico
+  BmoAssistant.kt              orquestração, histórico, prompt, ações
+  actions/ActionManager.kt     ações Android permitidas
+  data/SettingsRepository.kt   preferências e migração do modelo
+  data/LocalModelStore.kt      extração de Vosk/Piper
+  data/DiagnosticsManager.kt   logs e latência
+  face/BmoFaceView.kt          renderização dos PNGs originais
+  face/ExpressionManager.kt    catálogo das expressões
+  llm/LlmEngine.kt             carregamento/geração e cache de modelo
+  speech/SpeechRecognizerManager.kt  ASR Vosk + VAD por parciais
+  speech/TextToSpeechManager.kt      TTS Piper + cancelamento por geração
+  speech/VoskModelProvider.kt        modelo Vosk local
+  speech/WakeWordManager.kt          palavra de ativação
+
+app/src/main/cpp/
+  bmo_jni.cpp                  ponte JNI, prompt, geração e tempos
+  llama.cpp/                   llama.cpp vendorizado
+
+app/src/main/assets/
+  faces/                       PNGs originais
+  models/vosk-pt.zip           modelo Vosk pt-BR
+  models/tts-pt.zip            voz Piper pt-BR
 ```
-
----
-
-## Desempenho e memória
-
-- Modelo: Qwen3-0.6B em quantização **Q8_0** (cerca de 610 MB de pesos).
-- Contexto padrão: **1024 tokens**.
-- Máximo de tokens por resposta padrão: **96**.
-- Threads padrão: **3**; 4 threads tende a ser melhor no A22.
-- Primeiro carregamento do modelo: cerca de 1 segundo.
-- Primeira resposta: cerca de **30 segundos** no A22 (prompt inicial grande +
-  prefill). O cache de prefixo evita reprocessar o mesmo início nos turnos
-  seguintes, mas a geração ainda pode ser lenta.
-- A fala só começa depois que a resposta inteira é gerada; por isso a sensação de
-  demora inclui o tempo de “pensar” e o tempo de sintetizar/iniciar o áudio.
-- A geração é cancelável com toque duplo.
-
-O uso de memória pode ser alto por causa do modelo Q8_0. Se o Android encerrar o
-app, reduza o contexto, o limite de tokens ou use um modelo menor/mais quantizado.
-
----
-
-## Limitações conhecidas
-
-- **Somente `arm64-v8a`**. Não funciona em aparelhos antigos de 32 bits.
-- **O GGUF não acompanha o APK**; é necessário copiá-lo ou importá-lo.
-- **Palavra de ativação não é um detector neural dedicado.** É Vosk com gramática
-  restrita + gate de RMS. Funciona apenas com o app em primeiro plano, pode
-  errar em ambiente ruidoso e consome bateria.
-- **Microfone exclusivo:** wake word, ASR e TTS não usam o microfone ao mesmo
-  tempo; o app pausa/retoma o detector durante a conversa.
-- **ASR pequeno:** o modelo Vosk small tem vocabulário e precisão limitados,
-  especialmente com ruído, sotaque forte ou fala muito rápida.
-- **TTS:** há apenas a voz Piper pt-BR Faber (média). O sherpa-onnx está fixado
-  em 1.10.44 porque versões mais novas testadas ignoravam o `dataDir` do VITS e
-  falhavam com “phoneme_codepoints is empty”.
-- **Qualidade do LLM:** Qwen3-0.6B é pequeno; pode alucinar, repetir frases ou
-  errar ferramentas. O prompt tenta reduzir isso, mas não elimina o problema.
-- **Latência** no A22 é alta no primeiro turno e na geração de respostas longas.
-  O TTS também pode demorar a iniciar, e a fala pode repetir a resposta anterior
-  em vez da atual (problema em aberto).
-- **Emojis no TTS:** emojis presentes na resposta podem ser narrados pela voz.
-  Ainda não há filtro de emojis antes da síntese (problema em aberto).
-- **Ações** dependem das permissões e das telas disponíveis em cada versão do
-  Android; algumas configurações podem abrir apenas a tela principal.
-- **Configurações em paisagem:** o teclado pode ocupar boa parte da tela; use a
-  tecla de ação do teclado para enviar o texto.
-- **Sem testes automatizados** no momento (há dependências de JUnit configuradas,
-  mas a suíte ainda não foi escrita).
-
----
-
-## Diagnóstico e logs
-
-A tela de configurações mostra os eventos mais recentes. Para acompanhar pelo
-terminal:
-
-```bash
-adb logcat -s BMO/Assistant BMO/LLM BMO/Action BMO/Speech BMO/Tts BmoLlama BmoWakeWord
-```
-
-Ou, de forma mais ampla:
-
-```bash
-adb logcat | grep -Ei "BMO|BmoLlama|llama|vosk|sherpa|FATAL|AndroidRuntime"
-```
-
-Logs úteis:
-
-- `prompt tokens=N (cache C, reuse R)` — tamanho do prompt e reuso do KV cache.
-- `model loaded, n_ctx=... threads=...` — configuração efetiva do modelo.
-- `model released` — modelo descarregado.
-- `reprodução concluída` — fim da reprodução do TTS.
-
-Para limpar os modelos de voz extraídos e forçar nova extração:
-
-```bash
-adb shell pm clear com.spacexjr.bmo
-```
-
-Isso também apaga as preferências e o caminho salvo do modelo GGUF.
-
----
-
-## Solução de problemas
-
-### “Modelo não carregado”
-
-Verifique se o arquivo existe no caminho configurado e se é um GGUF válido.
-Use **Selecionar arquivo GGUF** nas configurações para importar novamente.
-
-### Modelo demora muito ou o app é encerrado
-
-Reduza o contexto e o limite de tokens. Feche outros apps. Confirme que o aparelho
-tem memória livre suficiente para os pesos Q8_0.
-
-### Microfone não funciona
-
-Conceda a permissão nas configurações do Android. Verifique se outro app está
-usando o microfone. O wake word e o ASR não podem escutar ao mesmo tempo.
-
-### Wake word não dispara
-
-Fale perto do microfone, em ambiente mais silencioso. O detector não é neural e
-a precisão é limitada. Confirme que a opção está habilitada e que o app está em
-primeiro plano.
-
-### Voz não sai
-
-Confira o volume de mídia do aparelho e o volume da voz nas configurações. Use
-**Testar voz**. Veja o diagnóstico para erros de carregamento do modelo Piper.
-
-### Erro ao importar o GGUF
-
-O arquivo precisa ter mais de 1 MB e começar com o magic `GGUF`. Se estiver
-corrompido, copie novamente.
-
----
-
-## Créditos e tecnologias
-
-- **llama.cpp** — inferência local do modelo GGUF.
-- **Qwen3-0.6B** — modelo de linguagem (não incluído no APK).
-- **Vosk** — reconhecimento de voz offline.
-- **sherpa-onnx** — execução do modelo VITS/Piper.
-- **Piper** — modelo de voz pt-BR Faber.
-- **AndroidSVG** — renderização dos SVGs.
-- **AndroidX / Material Components** — interface.
-- SVGs do rosto do BMO oriundos dos assets originais do projeto.
-
-Verifique as licenças de cada componente e do modelo antes de redistribuir o APK
-ou os arquivos de modelo.

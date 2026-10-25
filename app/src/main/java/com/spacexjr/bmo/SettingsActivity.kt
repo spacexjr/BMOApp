@@ -4,8 +4,6 @@ import android.Manifest
 import android.app.ActivityManager
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -23,7 +21,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.EditText
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.SeekBar
@@ -36,12 +33,11 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import com.caverock.androidsvg.SVG
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.spacexjr.bmo.databinding.ActivitySettingsBinding
+import com.spacexjr.bmo.face.BmoFaceView
 import com.spacexjr.bmo.face.ExpressionManager
-import com.spacexjr.bmo.face.SvgTemplateRenderer
 import com.spacexjr.bmo.llm.ModelStatus
 import com.spacexjr.bmo.speech.TextToSpeechManager
 import com.spacexjr.bmo.speech.VoskModelProvider
@@ -68,14 +64,13 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var systemStatusView: TextView
     private lateinit var diagnosticsView: TextView
     private lateinit var lastReplyView: TextView
-    private lateinit var previewView: ImageView
+    private lateinit var previewView: BmoFaceView
     private lateinit var faceScaleLabel: TextView
     private var thinkingSwitch: MaterialSwitch? = null
     private var pendingWakeEnable = false
     private var busy = false
 
     private val expressions by lazy { ExpressionManager(assets) }
-    private val previewRenderer by lazy { SvgTemplateRenderer(assets) }
 
     private val openModel = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) importModel(uri)
@@ -156,8 +151,8 @@ class SettingsActivity : AppCompatActivity() {
 
         thinkingSwitch = switchRow(
             modelCard,
-            "Thinking",
-            "Quando o template do Qwen3 suporta, desativa o raciocínio interno com o bloco vazio de thinking.",
+            "Raciocínio interno (experimental)",
+            "Compatível apenas com modelos que expõem enable_thinking no template (por exemplo, Qwen3). No Qwen2.5 não tem efeito.",
             settings.thinkingEnabled,
         ) { enabled ->
             repo.update { it.copy(thinkingEnabled = enabled) }
@@ -176,6 +171,14 @@ class SettingsActivity : AppCompatActivity() {
         slider(modelCard, "Threads de inferência", 1f, 6f, settings.threads.toFloat(), 1f) { value ->
             repo.update { it.copy(threads = value.toInt()) }
             assistant.updateSettings(repo.get())
+        }
+        slider(modelCard, "Mensagens mantidas no histórico", 0f, 40f, settings.historyLimit.toFloat(), 1f) { value ->
+            repo.update { it.copy(historyLimit = value.toInt()) }
+            assistant.updateSettings(repo.get())
+        }
+        button(modelCard, "Apagar histórico da conversa") {
+            assistant.clearHistory()
+            toast("Histórico da conversa apagado.")
         }
         body(modelCard, "Alterações de contexto, threads e modelo só valem depois de carregar novamente. O Q4_K_M usa menos RAM que o Q8_0.", small = true)
 
@@ -208,8 +211,8 @@ class SettingsActivity : AppCompatActivity() {
         }
         switchRow(
             voiceCard,
-            "Palavra de ativação “Ei, BMO”",
-            "Detector local por gramática Vosk. Funciona com o app aberto, consome bateria e não é um detector neural dedicado.",
+            "Palavra de ativação “Ei, BMO” (experimental)",
+            "O modelo Vosk pequeno não possui “bmo” no vocabulário; a ativação por voz pode não disparar. O toque no rosto continua sendo o método principal.",
             settings.wakeWordEnabled,
         ) { enabled ->
             if (enabled && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
@@ -249,17 +252,21 @@ class SettingsActivity : AppCompatActivity() {
         // ---------- Aparência ----------
         val lookCard = card(content)
         title(lookCard, "Aparência")
-        previewView = ImageView(this).apply {
-            adjustViewBounds = true
-            scaleType = ImageView.ScaleType.FIT_CENTER
+        previewView = BmoFaceView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(190)
             )
-            setBackgroundColor(Color.rgb(144, 229, 200))
         }
         lookCard.addView(previewView)
 
-        body(lookCard, "Expressão padrão", small = false)
+        body(lookCard, "Expressão de repouso", small = false)
+        // Apenas expressões que representam repouso. "Falando" e
+        // "Inicialização" são estados reais e não podem ser fixados aqui.
+        val restingExpression = expressions.canonical(settings.defaultExpression).let {
+            if (it == "speaking" || it == "warmup") "idle" else it
+        }
+        val names = expressions.availableExpressions()
+            .filter { it != "speaking" && it != "warmup" }
         val spinner = Spinner(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -267,12 +274,11 @@ class SettingsActivity : AppCompatActivity() {
             adapter = ArrayAdapter(
                 this@SettingsActivity,
                 android.R.layout.simple_spinner_dropdown_item,
-                expressions.availableExpressions(),
+                names.map { expressions.labelFor(it) },
             )
         }
         lookCard.addView(spinner)
-        val names = expressions.availableExpressions()
-        spinner.setSelection(names.indexOf(settings.defaultExpression).coerceAtLeast(0))
+        spinner.setSelection(names.indexOf(restingExpression).coerceAtLeast(0))
         spinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
                 val name = names[position]
@@ -283,7 +289,10 @@ class SettingsActivity : AppCompatActivity() {
 
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
         }
-        renderPreview(settings.defaultExpression)
+        renderPreview(restingExpression)
+        button(lookCard, "Testar animação") {
+            previewView.previewExpression(settings.defaultExpression, 4000L)
+        }
 
         faceScaleLabel = body(lookCard, "Escala do rosto: ${"%.0f".format(settings.faceScale * 100)}%", small = true)
         val scale = SeekBar(this).apply {
@@ -302,7 +311,7 @@ class SettingsActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
         })
         lookCard.addView(scale)
-        body(lookCard, "As imagens são as SVGs originais em assets/faces, sem redesenho.", small = true)
+        body(lookCard, "As imagens são os PNGs originais em assets/faces, sem redesenho.", small = true)
 
         // ---------- Sistema ----------
         val systemCard = card(content)
@@ -387,12 +396,12 @@ class SettingsActivity : AppCompatActivity() {
         val enabled = repo.get().thinkingEnabled
         thinkingWarning.text = when {
             status is ModelStatus.Ready && !status.supportsThinking ->
-                "Aviso: o template deste GGUF não expõe enable_thinking. Com Thinking desligado o app usa /no_think; o comportamento depende do modelo."
+                "Este GGUF não expõe enable_thinking; o controle de raciocínio interno fica sem efeito."
             status is ModelStatus.Ready && !enabled ->
-                "Thinking desativado: o app injeta o bloco vazio exatamente como o template Qwen3 com enable_thinking=false."
+                "Raciocínio interno desativado."
             status is ModelStatus.Ready && enabled ->
-                "Thinking ativado: o modelo pode gastar mais tokens antes de responder."
-            else -> "A compatibilidade com Thinking é verificada no template do modelo depois do carregamento."
+                "Raciocínio interno ativado: o modelo pode gastar mais tokens antes de responder."
+            else -> "A compatibilidade é verificada no template do modelo depois do carregamento."
         }
     }
 
@@ -417,7 +426,7 @@ class SettingsActivity : AppCompatActivity() {
         val debug = Debug.MemoryInfo()
         Debug.getMemoryInfo(debug)
         val pss = debug.totalPss / 1024
-        val tts = when (val s = assistant.ttsStatus.value) {
+        val tts = when (assistant.ttsStatus.value) {
             is TextToSpeechManager.Status.Ready -> "pronta"
             is TextToSpeechManager.Status.Loading -> "carregando"
             is TextToSpeechManager.Status.Error -> "erro"
@@ -435,7 +444,7 @@ class SettingsActivity : AppCompatActivity() {
                 is ModelStatus.Error -> "erro"
                 else -> "não carregado"
             }}")
-            appendLine("Thinking suportado pelo template: ${if (assistant.modelTemplateSupportsThinking()) "sim" else "não verificado/indisponível"}")
+            appendLine("Raciocínio interno suportado pelo template: ${if (assistant.modelTemplateSupportsThinking()) "sim" else "não"}")
             appendLine("ASR Vosk local: ${if (assistant.voskModelLoaded()) "carregado" else "em repouso"}")
             appendLine("TTS local: $tts")
             appendLine("Palavra de ativação: ${if (assistant.wakeWordRunning()) "rodando" else "parada"} (somente com o app aberto)")
@@ -536,7 +545,7 @@ class SettingsActivity : AppCompatActivity() {
                 renderModelStatus(assistant.modelStatus.value)
             } catch (t: Throwable) {
                 toast("Falha ao importar: ${t.message}")
-                app.diagnostics.error("Settings", "import model failed", t)
+                app.diagnostics.error("Configurações", "falha ao importar modelo", t)
             } finally {
                 dialog.dismiss()
                 if (!success) {
@@ -573,27 +582,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun renderPreview(name: String) {
         if (!::previewView.isInitialized) return
-        try {
-            val params = when (name) {
-                "look_around" -> mapOf("x" to 0.0)
-                "whistle", "sleeping" -> mapOf("t" to 0.3)
-                else -> emptyMap()
-            }
-            val svgText = previewRenderer.render(name, params)
-            val svg = SVG.getFromString(svgText)
-            val width = 560
-            val height = 420
-            svg.setDocumentWidth(width.toString())
-            svg.setDocumentHeight(height.toString())
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-            canvas.drawColor(Color.rgb(144, 229, 200))
-            svg.renderToCanvas(canvas)
-            previewView.setImageBitmap(bitmap)
-        } catch (t: Throwable) {
-            previewView.setImageDrawable(null)
-            app.diagnostics.error("Preview", "falha ao renderizar $name", t)
-        }
+        previewView.setPreviewExpression(name)
     }
 
     // ---------- small UI helpers ----------

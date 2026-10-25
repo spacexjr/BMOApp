@@ -12,8 +12,8 @@ android {
         applicationId = "com.spacexjr.bmo"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "2.0.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -86,10 +86,8 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.11.0")
-    implementation("androidx.documentfile:documentfile:1.0.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-    implementation("com.caverock:androidsvg-aar:1.4")
     implementation("com.alphacephei:vosk-android:0.3.47")
     implementation(files("libs/sherpa-onnx-1.10.44.aar"))
 

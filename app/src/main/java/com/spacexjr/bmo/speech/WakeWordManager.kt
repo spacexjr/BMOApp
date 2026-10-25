@@ -83,7 +83,7 @@ class WakeWordManager(
                     throw IllegalStateException("Microfone indisponível para a palavra de ativação.")
                 }
                 audio.startRecording()
-                main.post { onStatus?.invoke("Aguardando “Ei, BMO”") }
+                main.post { onStatus?.invoke("Palavra de ativação experimental ativa") }
                 val buffer = ShortArray(BUFFER_SAMPLES)
                 while (running && scope.isActive) {
                     val read = audio.read(buffer, 0, buffer.size)

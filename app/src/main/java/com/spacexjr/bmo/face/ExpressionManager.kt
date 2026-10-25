@@ -1,128 +1,138 @@
 package com.spacexjr.bmo.face
 
 import android.content.res.AssetManager
-import android.util.Log
 
+/**
+ * Catálogo das sequências de quadros originais do Be More Agent.
+ *
+ * Os arquivos são cópias exatas dos PNGs presentes em `faces/` no projeto
+ * original. Nenhum rosto é desenhado, gerado ou alterado pelo aplicativo:
+ * apenas os quadros existentes são alternados.
+ */
 data class FaceAnimation(
-    val frames: List<FaceFrame>,
-    val fps: Float,
-    val mode: Mode,
-    val template: TemplateSpec? = null,
-) {
-    enum class Mode { STATIC, LOOP, PINGPONG, ONCE }
-}
+    val frames: List<String>,
+    val frameDurationMs: Long,
+    val loop: Boolean,
+)
 
-data class FaceFrame(val asset: String, val params: Map<String, Double> = emptyMap())
-
-data class TemplateSpec(val asset: String, val param: String, val from: Double, val to: Double, val steps: Int)
+data class FaceExpression(
+    val id: String,
+    val label: String,
+    val frames: List<String>,
+    val frameDurationMs: Long,
+)
 
 class ExpressionManager(private val assets: AssetManager) {
 
-    private val available: Set<String> by lazy {
-        (assets.list("faces") ?: emptyArray())
-            .filter { it.endsWith(".svg") }
-            .map { it.removeSuffix(".svg") }
-            .toSet()
-    }
+    private val expressions: Map<String, FaceExpression> = linkedMapOf(
+        "idle" to FaceExpression(
+            id = "idle",
+            label = "Repouso",
+            frames = listOf("faces/idle/idle_01.png"),
+            frameDurationMs = 0L,
+        ),
+        "listening" to FaceExpression(
+            id = "listening",
+            label = "Escutando",
+            frames = listOf(
+                "faces/listening/listen_01.png",
+                "faces/listening/listen_02.png",
+            ),
+            frameDurationMs = 450L,
+        ),
+        "thinking" to FaceExpression(
+            id = "thinking",
+            label = "Processando",
+            frames = listOf(
+                "faces/thinking/thinking_01.png",
+                "faces/thinking/thinking_02.png",
+                "faces/thinking/thinking_03.png",
+                "faces/thinking/thinking_04.png",
+            ),
+            frameDurationMs = 400L,
+        ),
+        "speaking" to FaceExpression(
+            id = "speaking",
+            label = "Falando",
+            frames = listOf(
+                "faces/speaking/speaking_01.png",
+                "faces/speaking/speaking_02.png",
+                "faces/speaking/speaking_03.png",
+            ),
+            frameDurationMs = 90L,
+        ),
+        "error" to FaceExpression(
+            id = "error",
+            label = "Erro / confusão",
+            frames = listOf("faces/error/error_01.png"),
+            frameDurationMs = 0L,
+        ),
+        "warmup" to FaceExpression(
+            id = "warmup",
+            label = "Inicialização",
+            frames = listOf("faces/warmup/warmup_01.png"),
+            frameDurationMs = 0L,
+        ),
+    )
 
-    fun availableExpressions(): List<String> = available.sorted()
+    /** Expressões que realmente possuem quadros no projeto original. */
+    fun availableExpressions(): List<String> = expressions.keys.toList()
 
-    fun has(expression: String): Boolean = available.contains(expression)
+    fun labelFor(expression: String): String =
+        expressions[canonical(expression)]?.label ?: canonical(expression)
 
-    fun resolve(state: BmoState, defaultExpression: String = "neutral"): String {
-        val wanted = when (state) {
-            BmoState.RESTING -> canonical(defaultExpression)
-            BmoState.LISTENING -> "listening"
-            BmoState.THINKING -> "thinking"
-            BmoState.SPEAKING -> "speaking"
-            BmoState.HAPPY -> "happy"
-            BmoState.SURPRISED -> "surprised"
-            BmoState.SAD -> "sad"
-            BmoState.CONFUSED -> "concerned"
-            BmoState.ERROR -> "dismayed"
-            BmoState.OFF -> "sleeping"
-        }
-        return if (has(wanted)) wanted else fallbackFor(state)
-    }
-
-    fun animationFor(state: BmoState, defaultExpression: String = "neutral"): FaceAnimation {
-        val name = resolve(state, defaultExpression)
-        return animationForExpression(name)
-    }
-
-    fun animationForExpression(expression: String): FaceAnimation {
-        val name = canonical(expression)
-        return when {
-            name == "speaking" && !has("speaking_0") -> staticAnimation(name)
-            name == "speaking" -> FaceAnimation(
-                frames = (0..5).map { FaceFrame("speaking_$it") },
-                fps = 13f,
-                mode = FaceAnimation.Mode.PINGPONG,
-            )
-            name == "sleeping" -> templateAnimation(name, "t", 0.0, 1.0, 8, 5f, FaceAnimation.Mode.LOOP)
-            name == "whistle" -> templateAnimation(name, "t", 0.0, 1.0, 6, 4f, FaceAnimation.Mode.LOOP)
-            name == "look_around" -> templateAnimation(name, "x", -1.0, 1.0, 5, 3f, FaceAnimation.Mode.PINGPONG)
-            else -> staticAnimation(name)
-        }
-    }
-
-    private fun templateAnimation(
-        name: String,
-        param: String,
-        from: Double,
-        to: Double,
-        steps: Int,
-        fps: Float,
-        mode: FaceAnimation.Mode,
-    ): FaceAnimation {
-        if (!has(name)) return staticAnimation("neutral")
-        val frames = (0 until steps).map { index ->
-            val value = if (steps == 1) from else from + (to - from) * index / (steps - 1)
-            FaceFrame(name, mapOf(param to value))
-        }
-        return FaceAnimation(
-            frames = frames,
-            fps = fps,
-            mode = mode,
-            template = TemplateSpec(name, param, from, to, steps),
-        )
-    }
-
-    private fun staticAnimation(name: String): FaceAnimation {
-        val resolved = if (has(name)) name else fallbackStatic(name)
-        return FaceAnimation(listOf(FaceFrame(resolved)), 0f, FaceAnimation.Mode.STATIC)
-    }
-
-    private fun fallbackFor(state: BmoState): String = when (state) {
-        BmoState.OFF -> if (has("dead")) "dead" else "neutral"
-        BmoState.ERROR -> if (has("glitch")) "glitch" else "neutral"
-        BmoState.SAD -> if (has("gloomy")) "gloomy" else "neutral"
-        BmoState.SURPRISED -> if (has("excited")) "excited" else "neutral"
-        else -> "neutral"
-    }
-
-    private fun fallbackStatic(name: String): String = when (name) {
-        "happy", "smile", "excited" -> if (has("neutral")) "neutral" else available.firstOrNull() ?: "neutral"
-        else -> if (has("neutral")) "neutral" else available.firstOrNull() ?: "neutral"
-    }
+    fun has(expression: String): Boolean = expressions.containsKey(canonical(expression))
 
     fun canonical(expression: String): String {
         val value = expression.trim().lowercase()
         return when (value) {
-            "", "idle", "resting", "neutral" -> "neutral"
-            "listening", "listen" -> "listening"
-            "thinking", "processing" -> "thinking"
-            "speaking", "talking" -> "speaking"
-            "surprised", "surprise", "shocked" -> "surprised"
-            "confused", "concerned" -> "concerned"
-            "error" -> "dismayed"
-            "off", "sleep", "asleep", "sleeping" -> "sleeping"
-            else -> if (has(value)) value else "neutral"
+            "", "idle", "resting", "repouso", "neutral" -> "idle"
+            "listening", "listen", "escutando" -> "listening"
+            "thinking", "processing", "processando" -> "thinking"
+            "speaking", "talking", "falando" -> "speaking"
+            "error", "erro", "confused", "confuso" -> "error"
+            "warmup", "inicializacao", "inicialização" -> "warmup"
+            "happy", "feliz" -> "listening"
+            "sad", "triste" -> "thinking"
+            "surprised", "surpreso" -> "listening"
+            "off", "sleeping", "dormindo" -> "idle"
+            else -> if (expressions.containsKey(value)) value else "idle"
         }
     }
 
-    companion object {
-        private const val TAG = "BmoExpressions"
-        fun logMissing(name: String) = Log.w(TAG, "expressão ausente nos assets: $name")
+    fun resolve(state: BmoState, defaultExpression: String = "idle"): String = when (state) {
+        BmoState.RESTING -> canonical(defaultExpression)
+        BmoState.LISTENING -> "listening"
+        BmoState.THINKING -> "thinking"
+        BmoState.SPEAKING -> "speaking"
+        BmoState.HAPPY -> "listening"
+        BmoState.SURPRISED -> "listening"
+        BmoState.SAD -> "thinking"
+        BmoState.CONFUSED -> "error"
+        BmoState.ERROR -> "error"
+        BmoState.OFF -> "idle"
+    }
+
+    fun animationFor(state: BmoState, defaultExpression: String = "idle"): FaceAnimation =
+        animationForExpression(resolve(state, defaultExpression))
+
+    fun animationForExpression(expression: String): FaceAnimation {
+        val item = expressions[canonical(expression)]
+            ?: expressions.getValue("idle")
+        return FaceAnimation(
+            frames = item.frames,
+            frameDurationMs = item.frameDurationMs,
+            loop = item.frames.size > 1,
+        )
+    }
+
+    fun firstFrame(expression: String): String =
+        animationForExpression(expression).frames.first()
+
+    fun assetExists(path: String): Boolean = try {
+        assets.open(path).close()
+        true
+    } catch (_: Throwable) {
+        false
     }
 }
