@@ -214,6 +214,12 @@ carregado é reutilizado.
 
 ---
 
+## Problemas
+- Detecção de voz bugada
+- Algumas faces inutilizadas
+
+---
+
 ## Testes realizados no Galaxy A22
 
 Aparelho: SM-A225M, Android 16/API 36, 720×1600, arm64-v8a.
