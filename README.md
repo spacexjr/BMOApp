@@ -217,6 +217,7 @@ carregado é reutilizado.
 ## Problemas
 - Detecção de voz bugada
 - Algumas faces inutilizadas
+- Wake UP word não implementada
 
 ---
 
