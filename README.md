@@ -147,7 +147,7 @@ O `adb reverse` é só para desenvolvimento; não substitui a conexão Wi-Fi rea
 
 A palavra de ativação é **baseada na transcrição**. O áudio é transcrito pelo Whisper.cpp e o texto normalizado é comparado com `ei bmo`, `ei bemo`, `hey bmo`, `oi bmo`, `e bmo` e `bmo`.
 
-Isso **não** é um detector acústico treinado para “Ei, BMO”. O arquivo `wakeword_hey_jarvis.onnx` do projeto original é o modelo “Hey Jarvis” e é preservado apenas como referência; ele não é usado como detector principal. Veja [docs/LIMITACOES.md](docs/LIMITACOES.md).
+Isso **não** é um detector acústico treinado para “Ei, BMO”. O arquivo `wakeword_hey_jarvis.onnx` do projeto original é o modelo “Hey Jarvis” e é preservado apenas como referência; ele não é usado como detector principal. Vamos adicionar wakeword e voz do BMO futuramente. Veja [docs/LIMITACOES.md](docs/LIMITACOES.md).
 
 ## Build
 
@@ -193,7 +193,7 @@ Os APKs e a pasta `android-app/keystore/` estão no `.gitignore`.
 Backend:
 
 ```bash
-cd backend
+cd backend  android-app/app/build/outputs/apk/release/app-release.apk
 .venv/bin/python -m pytest -q
 ```
 
@@ -241,7 +241,7 @@ assets/                  Rosto original, licença e wakeword legado
 docs/                    Instalação, protocolo, segurança, limitações e evidências
 protocol/schemas/        Esquemas JSON do protocolo bmo/1
 scripts/                 Setup, build, E2E e utilitários
-tools/                   Binários/modelos locais (não versionados)
+tools/                   Binári  android-app/app/build/outputs/apk/release/app-release.apkos/modelos locais (não versionados)
 ```
 
 ## Documentação
