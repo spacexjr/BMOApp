@@ -1,0 +1,67 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8765,
+    "token_env": "BMO_TOKEN",
+    "max_ws_message_bytes": 262144,
+    "log_level": "INFO",
+    "discovery_enabled": true,
+    "discovery_port": 8766
+  },
+  "llm": {
+    "provider": "ollama",
+    "base_url": "http://127.0.0.1:11434",
+    "model": "qwen3.5:2b",
+    "timeout_s": 180,
+    "temperature": 0.5,
+    "num_predict": 220,
+    "history_messages": 12,
+    "think": false,
+    "system_prompt": "Você é o BMO, um pequeno robô assistente simpático que mora em um celular. Fale sempre em português do Brasil, com frases curtas, claras e amigáveis. Não invente que executou ações. Você não tem câmera e não tira fotos. Quando não souber algo, diga que não sabe. Se o usuário pedir a hora ou a data, o sistema responde antes de você; não tente adivinhar horários."
+  },
+  "stt": {
+    "engine": "whisper_cpp",
+    "binary": "../tools/whisper.cpp/build/bin/whisper-cli",
+    "model": "../tools/whisper-models/ggml-base.bin",
+    "language": "pt",
+    "threads": 4,
+    "timeout_s": 90,
+    "prompt": "Ei, BMO. Ei, BMO. Conversa em português do Brasil com o assistente BMO."
+  },
+  "tts": {
+    "engine": "auto",
+    "piper_binary": "../tools/piper/piper",
+    "voice_model": "../tools/voices/pt_BR-faber-medium.onnx",
+    "espeak_binary": "espeak-ng",
+    "espeak_voice": "pt-br",
+    "espeak_speed": 150,
+    "timeout_s": 90,
+    "max_chars": 1200
+  },
+  "audio": {
+    "sample_rate": 16000,
+    "channels": 1,
+    "frame_ms": 20,
+    "vad_min_rms": 0.012,
+    "vad_start_ms": 180,
+    "vad_end_silence_ms": 700,
+    "vad_pre_roll_ms": 300,
+    "min_utterance_ms": 350,
+    "max_utterance_s": 15
+  },
+  "wakeword": {
+    "enabled": true,
+    "mode": "transcript",
+    "phrases": ["ei bmo", "ei bemo", "hey bmo", "oi bmo", "e bmo", "bmo"],
+    "acoustic_model": null,
+    "note": "A palavra de ativação é validada pela transcrição (STT). O wakeword.onnx original do projeto be-more-agent é 'Hey Jarvis' e não reconhece 'Ei, BMO'; ele não é usado como detector principal."
+  },
+  "security": {
+    "allowed_commands": ["get_time", "get_date"],
+    "max_text_chars": 1000,
+    "audio_cache_ttl_s": 300
+  },
+  "paths": {
+    "log_file": "data/bmo-backend.log"
+  }
+}

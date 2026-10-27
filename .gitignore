@@ -1,22 +1,36 @@
-# Gradle / build
-.gradle/
-**/build/
-app/.cxx/
+# Python / backend
+backend/.venv/
+backend/.pytest_cache/
+backend/**/__pycache__/
+backend/**/*.py[cod]
+backend/data/token
+backend/data/*.log
+backend/data/*.log.*
+*.egg-info/
+
+# Android / Gradle
+android-app/.gradle/
+android-app/.kotlin/
+android-app/build/
+android-app/app/build/
+android-app/local.properties
+android-app/keystore/
+*.jks
+*.keystore
 *.apk
 *.aab
 
-# Android Studio / IDEA
-.idea/
-*.iml
-captures/
+# Modelos e ferramentas locais (grandes e baixados à parte)
+tools/
+!tools/.gitkeep
 
-# Local SDK path
-local.properties
-
-# Large language model (not bundled in the APK; see README)
-assets/models/*.gguf
-assets/models/*.part
-
-# OS files
+# Sistema / editores
 .DS_Store
 Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Evidências temporárias grandes
+/tmp/

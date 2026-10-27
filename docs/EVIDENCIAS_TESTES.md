@@ -1,0 +1,255 @@
+# Evidências de teste
+
+Registro do que foi realmente executado. Datas no fuso local (America/Sao_Paulo), em **2026-10-26**.
+
+## Ambiente
+
+### PC
+
+```text
+Linux fedora 7.1.8-200.fc44.x86_64
+Python 3.14.6
+OpenJDK 25.0.4.1
+Gradle 9.3.0
+Android compileSdk 36 / minSdk 26 / targetSdk 36
+```
+
+Serviços locais:
+
+- Ollama em `127.0.0.1:11434` com `qwen3.5:2b` (também instalados `gemma3:1b` e `moondream`).
+- whisper.cpp com `ggml-base.bin`.
+- Piper com `pt_BR-faber-medium.onnx`.
+- espeak-ng como fallback.
+- Backend em `0.0.0.0:8765`, descoberta UDP em `8766`.
+
+### Celular real
+
+```text
+adb devices -l
+75GUQG6TIVOFIRGI  device usb:1-1 product:rodin_in model:2412DPC0AI device:rodin
+
+Fabricante: Xiaomi
+Modelo:     2412DPC0AI
+Codinome:   rodin
+Android:    17 (API 37)
+Hardware:   mt6899
+Tela nativa: 1220 x 2712, densidade 490 dpi
+```
+
+O app foi instalado e executado nesse aparelho real, via USB para instalação e via Wi-Fi para a conexão com o backend. Em um momento anterior, a resolução foi reduzida com `wm size 720x1600` e `wm density 320` para capturas de tela; depois foi restaurada para a resolução nativa.
+
+Rede do teste:
+
+```text
+PC:      192.168.3.24
+Celular: 192.168.3.9
+Máscara: 192.168.3.0/24
+```
+
+## 1. Testes automatizados do backend
+
+Comando:
+
+```bash
+cd backend
+.venv/bin/python -m pytest -q
+```
+
+Resultado:
+
+```text
+...........................                                              [100%]
+27 passed, 1 warning in 0.59s
+```
+
+O único aviso é uma depreciação externa do Starlette/httpx (`StarletteDeprecationWarning`), não uma falha do projeto.
+
+Cobrem:
+
+- validação do protocolo;
+- autenticação;
+- VAD e conversão de áudio;
+- detecção de palavra de ativação;
+- ações locais de hora/data;
+- endpoints HTTP;
+- comportamento de sessão WebSocket;
+- limpeza de transcrição.
+
+## 2. Testes unitários do Android
+
+Comando:
+
+```bash
+cd android-app
+./gradlew testDebugUnitTest
+```
+
+Resultado:
+
+```text
+TEST-br.com.bmoapp.AppSettingsTest.xml
+tests="3" skipped="0" failures="0" errors="0"
+```
+
+Cobrem a montagem de `ws://`/`http://` a partir do host configurado, a remoção de esquema/barra final e a validação de host/porta.
+
+## 3. Teste E2E com serviços reais
+
+Comando:
+
+```bash
+cd backend
+.venv/bin/python ../scripts/e2e_ws.py \
+  --text "Ei, BMO, que horas são?" \
+  --output /tmp/bmo-resposta-e2e.wav
+```
+
+Saída:
+
+```text
+[teste] Fala sintetizada (1.6s, 22050 Hz)
+[teste] PCM: 50612 bytes
+[teste] Protocolo: bmo/1 sessão ee1b63eea105
+[teste] Estado inicial: idle
+[teste] Áudio pronto: audio.ready
+[teste] Evento: state listening Microfone ativo. Diga 'Ei, BMO'.
+[teste] Evento: state idle Microfone pausado.
+[teste] Evento: state thinking Transcrevendo a fala...
+[teste] Transcrição: 'E BMO, que horas são?'
+[teste] Evento: wakeword.detected
+[teste] Evento: state thinking Pensando...
+[teste] Resposta: 'Agora são 21:55.'
+[teste] Evento: state speaking Falando...
+[teste] Evento: audio.start 22050 Hz
+[teste] Evento: audio.end
+[teste] Áudio da resposta salvo em /tmp/bmo-resposta-e2e.wav (89716 bytes)
+[teste] RESULTADO: OK
+```
+
+O teste usa **fala sintetizada**, não voz humana ao vivo. Ele valida a cadeia completa:
+
+```text
+WAV -> PCM 16 kHz -> WebSocket -> VAD -> whisper.cpp -> wake word
+    -> intenção local (hora) -> texto -> Piper -> PCM -> WAV de resposta
+```
+
+A transcrição não foi perfeita (“E BMO” em vez de “Ei, BMO”), mas a normalização do detector aceitou a frase `e bmo`. Isso é uma evidência real da limitação descrita em [LIMITACOES.md](LIMITACOES.md).
+
+## 4. Teste de conexão Wi-Fi no celular real
+
+O APK debug foi instalado e iniciado com:
+
+```bash
+adb shell am start -n br.com.bmoapp.debug/br.com.bmoapp.MainActivity \
+  --es bmo_host 192.168.3.24 \
+  --ei bmo_port 8765 \
+  --es bmo_token "$(cat backend/data/token)"
+```
+
+Depois de alguns segundos, a interface mostrou:
+
+```text
+PC conectado
+Conectado. Toque em Ouvir para começar.
+```
+
+A conexão foi feita **pelo Wi-Fi real** (`192.168.3.24`), sem `adb reverse`. O servidor registrou a descoberta UDP respondida para `192.168.3.9`:
+
+```text
+INFO bmo.discovery: Descoberta respondida para 192.168.3.9:...
+```
+
+Capturas:
+
+- `docs/evidence/real-wifi-rosto-2712x1220.png` — rosto somente, tela nativa.
+- `docs/evidence/real-wifi-controles-2712x1220.png` — controles revelados por toque.
+- `docs/evidence/real-wifi-transcricao-2712x1220.png` — sessão com microfone ativo e transcrição.
+
+A captura de microfone real chegou a produzir a transcrição espontânea `Eu vou em um meu suor.` durante a sessão. Isso demonstra que o caminho de captura/STT estava ativo, mas **não** é um teste acústico controlado de “Ei, BMO”.
+
+## 5. Interface e modo somente rosto
+
+Capturas:
+
+- `docs/evidence/rosto-somente-1600x720.png` — rosto somente, versão com resolução de teste 1600×720.
+- `docs/evidence/release-rosto-somente-1600x720.png` — APK release abrindo no modo somente rosto.
+- `docs/evidence/real-wifi-rosto-2712x1220.png` — rosto somente na resolução nativa do celular real, conectado por Wi-Fi.
+- `docs/evidence/ajustes-paisagem-1600x720.png` — tela de ajustes em paisagem, com rolagem.
+
+Nota: a captura `release-rosto-somente-1600x720.png` foi feita antes do ajuste final de cor de fundo/ícone. O APK release final foi recompilado, assinado e reinstalado; a mudança posterior foi apenas de recursos visuais de inicialização, sem alterar o comportamento do app.
+
+Comportamento verificado:
+
+- abre em paisagem;
+- rosto ocupa a tela, com o fundo verde contínuo;
+- controles ficam ocultos;
+- toque no rosto mostra os controles;
+- toque e segure abre os ajustes;
+- botões de microfone, texto, falar agora e parar fala aparecem no overlay;
+- ajustes continuam acessíveis e roláveis em paisagem;
+- barras do sistema ficam ocultas em modo imersivo.
+
+## 6. APK release
+
+Build:
+
+```bash
+cd android-app
+STORE_PASS=$(sed -n 's/^storePassword=//p' keystore/keystore.properties)
+BMO_KEYSTORE="$PWD/keystore/bmo-release.jks" \
+BMO_KEY_ALIAS=bmo \
+BMO_STORE_PASSWORD="$STORE_PASS" \
+BMO_KEY_PASSWORD="$STORE_PASS" \
+./gradlew assembleRelease
+```
+
+Resultado: `BUILD SUCCESSFUL`.
+
+Verificação da assinatura:
+
+```text
+Signer #1 certificate DN: CN=BMO App, OU=Desenvolvimento Local, O=BMO, L=Local, ST=Local, C=BR
+Signer #1 certificate SHA-256 digest: ecedc95295803337ace411eefe1fea08b890a5d51f32860bac406fe44cc19088
+Signer #1 certificate SHA-1 digest: 73068a87e8ca595f94222e5c9c05436cfc7ce5d7
+```
+
+APKs gerados:
+
+```text
+android-app/app/build/outputs/apk/debug/app-debug.apk
+android-app/app/build/outputs/apk/release/app-release.apk
+```
+
+Tamanhos e hashes no momento do teste:
+
+```text
+Debug   ~12 MB   SHA-256 259307b945c1d579e7c57ae48e8c7329a9435fd7b9ccacd6e5d3f50a30c21f13
+Release ~7,9 MB  SHA-256 ea9432a41f4b9705b3302dbb30a5c892077a7a6c5bcfaaed12ac8dc0c18d0d05
+```
+
+O APK release foi instalado no celular real e abriu no modo somente rosto. O debug foi usado para os testes com extras de conexão e para as capturas na resolução nativa.
+
+## 7. Serviço em primeiro plano
+
+A notificação persistente do serviço foi observada no Android:
+
+```text
+BMO — Microfone ativo
+```
+
+O serviço usa o tipo `microphone` e uma notificação de baixa importância, com ação **Parar escuta**. Quando o microfone é pausado, o serviço se encerra após alguns segundos.
+
+Ressalva: o teste prolongado com a tela apagada e voz humana ao vivo ainda não foi concluído de forma objetiva. O comportamento depende das políticas de bateria do fabricante.
+
+## 8. O que não foi validado
+
+- “Ei, BMO” com voz humana ao vivo, em várias distâncias/ruídos.
+- Latência ponta a ponta com voz humana.
+- Qualidade acústica do alto-falante e do microfone dentro da carcaça.
+- Cancelamento de eco com o BMO falando e ouvindo ao mesmo tempo.
+- Teste de 24h contínuas.
+- Outros modelos de celular.
+- Instalação via Play Store (o APK é assinado localmente).
+- TLS/reverse proxy.
+
+Essas pendências estão detalhadas em [LIMITACOES.md](LIMITACOES.md).

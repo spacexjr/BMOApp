@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bmo.local/protocol/schemas/client-message.schema.json",
+  "title": "Mensagem do cliente BMO/1",
+  "description": "Objeto JSON enviado pelo app Android ao backend. Quadros binários PCM16LE são enviados fora deste esquema.",
+  "type": "object",
+  "required": ["type"],
+  "additionalProperties": true,
+  "oneOf": [
+    { "$ref": "#/$defs/hello" },
+    { "$ref": "#/$defs/ping" },
+    { "$ref": "#/$defs/audioStart" },
+    { "$ref": "#/$defs/audioEnd" },
+    { "$ref": "#/$defs/text" },
+    { "$ref": "#/$defs/activate" },
+    { "$ref": "#/$defs/interrupt" },
+    { "$ref": "#/$defs/playbackStarted" },
+    { "$ref": "#/$defs/playbackDone" },
+    { "$ref": "#/$defs/reset" }
+  ],
+  "$defs": {
+    "hello": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "hello" },
+        "protocol": { "const": "bmo/1" },
+        "client": { "type": "string", "maxLength": 80 },
+        "client_version": { "type": "string", "maxLength": 40 }
+      }
+    },
+    "ping": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "ping" },
+        "ts": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "audioStart": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "audio.start" },
+        "format": { "const": "pcm_s16le", "default": "pcm_s16le" },
+        "sample_rate": { "type": "integer", "minimum": 8000, "maximum": 48000, "default": 16000 },
+        "channels": { "const": 1, "default": 1 }
+      }
+    },
+    "audioEnd": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "audio.end" }
+      }
+    },
+    "text": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "text" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      }
+    },
+    "activate": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "activate" }
+      }
+    },
+    "interrupt": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "interrupt" }
+      }
+    },
+    "playbackStarted": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "playback.started" }
+      }
+    },
+    "playbackDone": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "playback.done" }
+      }
+    },
+    "reset": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "reset" }
+      }
+    }
+  }
+}

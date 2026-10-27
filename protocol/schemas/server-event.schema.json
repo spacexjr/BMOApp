@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bmo.local/protocol/schemas/server-event.schema.json",
+  "title": "Evento do servidor BMO/1",
+  "description": "Objeto JSON enviado pelo backend ao app Android. Os bytes PCM16LE de áudio são enviados em quadros binários após audio.start.",
+  "type": "object",
+  "required": ["type", "seq", "ts"],
+  "additionalProperties": true,
+  "oneOf": [
+    { "$ref": "#/$defs/hello" },
+    { "$ref": "#/$defs/helloOk" },
+    { "$ref": "#/$defs/state" },
+    { "$ref": "#/$defs/pong" },
+    { "$ref": "#/$defs/audioReady" },
+    { "$ref": "#/$defs/vad" },
+    { "$ref": "#/$defs/transcript" },
+    { "$ref": "#/$defs/wakewordDetected" },
+    { "$ref": "#/$defs/wakewordActivated" },
+    { "$ref": "#/$defs/wakewordNotDetected" },
+    { "$ref": "#/$defs/requestAccepted" },
+    { "$ref": "#/$defs/assistantDelta" },
+    { "$ref": "#/$defs/assistantDone" },
+    { "$ref": "#/$defs/audioStart" },
+    { "$ref": "#/$defs/audioEnd" },
+    { "$ref": "#/$defs/audioStop" },
+    { "$ref": "#/$defs/audioUnavailable" },
+    { "$ref": "#/$defs/error" },
+    { "$ref": "#/$defs/historyReset" }
+  ],
+  "properties": {
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Sequência crescente por sessão."
+    },
+    "ts": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Timestamp Unix em milissegundos."
+    }
+  },
+  "$defs": {
+    "hello": {
+      "type": "object",
+      "required": ["type", "protocol", "server_version", "session_id", "audio", "wakeword", "capabilities"],
+      "properties": {
+        "type": { "const": "hello" },
+        "protocol": { "const": "bmo/1" },
+        "server_version": { "type": "string" },
+        "session_id": { "type": "string", "maxLength": 64 },
+        "audio": {
+          "type": "object",
+          "required": ["format", "sample_rate", "channels", "frame_ms"],
+          "properties": {
+            "format": { "const": "pcm_s16le" },
+            "sample_rate": { "type": "integer" },
+            "channels": { "type": "integer" },
+            "frame_ms": { "type": "integer" }
+          }
+        },
+        "wakeword": {
+          "type": "object",
+          "required": ["enabled", "mode", "phrases"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "mode": { "type": "string" },
+            "phrases": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "capabilities": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "helloOk": {
+      "type": "object",
+      "required": ["type", "protocol", "session_id"],
+      "properties": {
+        "type": { "const": "hello.ok" },
+        "protocol": { "const": "bmo/1" },
+        "session_id": { "type": "string" }
+      }
+    },
+    "state": {
+      "type": "object",
+      "required": ["type", "state"],
+      "properties": {
+        "type": { "const": "state" },
+        "state": { "enum": ["idle", "listening", "thinking", "speaking", "error"] },
+        "detail": { "type": "string" }
+      }
+    },
+    "pong": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "pong" },
+        "echo": {},
+        "server_ts": { "type": "integer" }
+      }
+    },
+    "audioReady": {
+      "type": "object",
+      "required": ["type", "format", "sample_rate", "channels"],
+      "properties": {
+        "type": { "const": "audio.ready" },
+        "format": { "const": "pcm_s16le" },
+        "sample_rate": { "type": "integer" },
+        "channels": { "const": 1 }
+      }
+    },
+    "vad": {
+      "type": "object",
+      "required": ["type", "speaking"],
+      "properties": {
+        "type": { "const": "vad" },
+        "speaking": { "type": "boolean" }
+      }
+    },
+    "transcript": {
+      "type": "object",
+      "required": ["type", "text", "final"],
+      "properties": {
+        "type": { "const": "transcript" },
+        "text": { "type": "string" },
+        "final": { "type": "boolean" },
+        "source": { "enum": ["audio", "texto"] },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "wakewordDetected": {
+      "type": "object",
+      "required": ["type", "phrase", "transcript"],
+      "properties": {
+        "type": { "const": "wakeword.detected" },
+        "phrase": { "type": "string" },
+        "transcript": { "type": "string" }
+      }
+    },
+    "wakewordActivated": {
+      "type": "object",
+      "required": ["type", "manual"],
+      "properties": {
+        "type": { "const": "wakeword.activated" },
+        "manual": { "type": "boolean" },
+        "message": { "type": "string" }
+      }
+    },
+    "wakewordNotDetected": {
+      "type": "object",
+      "required": ["type", "message"],
+      "properties": {
+        "type": { "const": "wakeword.not_detected" },
+        "reason": { "type": "string" },
+        "message": { "type": "string" },
+        "transcript": { "type": "string" }
+      }
+    },
+    "requestAccepted": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "request.accepted" },
+        "text": { "type": "string" }
+      }
+    },
+    "assistantDelta": {
+      "type": "object",
+      "required": ["type", "text", "id"],
+      "properties": {
+        "type": { "const": "assistant.text.delta" },
+        "text": { "type": "string" },
+        "id": { "type": "string" }
+      }
+    },
+    "assistantDone": {
+      "type": "object",
+      "required": ["type", "text", "id", "audio_available"],
+      "properties": {
+        "type": { "const": "assistant.text.done" },
+        "text": { "type": "string" },
+        "id": { "type": "string" },
+        "audio_available": { "type": "boolean" }
+      }
+    },
+    "audioStart": {
+      "type": "object",
+      "required": ["type", "id", "format", "sample_rate", "channels", "duration_ms", "engine"],
+      "properties": {
+        "type": { "const": "audio.start" },
+        "id": { "type": "string" },
+        "assistant_id": { "type": "string" },
+        "format": { "const": "pcm_s16le" },
+        "sample_rate": { "type": "integer" },
+        "channels": { "type": "integer" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "engine": { "type": "string" }
+      }
+    },
+    "audioEnd": {
+      "type": "object",
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "const": "audio.end" },
+        "id": { "type": "string" }
+      }
+    },
+    "audioStop": {
+      "type": "object",
+      "required": ["type", "reason"],
+      "properties": {
+        "type": { "const": "audio.stop" },
+        "reason": { "type": "string" }
+      }
+    },
+    "audioUnavailable": {
+      "type": "object",
+      "required": ["type", "reason", "message"],
+      "properties": {
+        "type": { "const": "audio.unavailable" },
+        "reason": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": ["type", "code", "message", "fatal"],
+      "properties": {
+        "type": { "const": "error" },
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "fatal": { "type": "boolean" }
+      }
+    },
+    "historyReset": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "history.reset" }
+      }
+    }
+  }
+}

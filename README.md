@@ -1,297 +1,258 @@
 # BMO App
 
-Aplicativo Android nativo e **offline** do BMO (inspirado em *Adventure Time*),
-feito para o **Samsung Galaxy A22 4G (SM-A225M, arm64-v8a)**.
+BMO de mesa com rosto animado no Android e processamento de voz/IA no PC.
 
-Conversa por texto ou voz, reconhecimento de fala, síntese de voz, palavra de
-ativação e ações do aparelho acontecem **no próprio celular**. O aplicativo não
-possui permissão de internet e não envia áudio, texto ou histórico para
-servidores.
+O celular Android é a interface: mostra apenas o rosto do BMO em paisagem, captura o microfone e reproduz a voz. O PC executa o backend local com detecção de fala, transcrição, LLM e síntese de voz. O áudio não é enviado para nuvem.
 
-- Pacote: `com.spacexjr.bmo`
-- Versão: `2.0.0` (`versionCode 2`)
-- Interface: paisagem, imersiva, pt-BR
-- Android mínimo: 8.0 (API 26); alvo: API 34
-- ABIs: somente `arm64-v8a`
+> Estado atual: funcional em rede local, com APK de depuração e APK release assinado localmente. A validação manual foi feita em um **Xiaomi 2412DPC0AI real** (Android 17) via Wi-Fi e USB. Veja [docs/EVIDENCIAS_TESTES.md](docs/EVIDENCIAS_TESTES.md).
 
----
+## Funcionalidades
 
-## Componentes reais
+- Rosto do BMO ocupando a tela inteira, em paisagem, sem barras do sistema.
+- Controles escondidos: toque no rosto mostra/oculta; toque longo abre os ajustes.
+- Estados visuais: desconectado, conectando, aguardando, ouvindo, pensando, falando e erro.
+- Microfone PCM 16 kHz mono, em blocos de 20 ms.
+- Reprodução de voz em streaming no alto-falante.
+- Detecção de fala por energia (VAD) no PC.
+- Transcrição local com whisper.cpp.
+- Respostas locais de hora/data sem passar pelo LLM.
+- Conversa com Ollama em português do Brasil.
+- Voz local com Piper (pt-BR) e fallback para espeak-ng.
+- WebSocket autenticado por token e protocolo versionado `bmo/1`.
+- Descoberta do PC na rede local por UDP broadcast.
+- Reconexão automática com espera progressiva.
+- Serviço em primeiro plano para escutar com a tela desligada.
+- Configuração de IP, porta, token, volume, tela ligada, reconexão e escuta em segundo plano.
+- Testes de alto-falante e de nível do microfone.
+- Logs de diagnóstico no app e no backend.
+- Sem câmera, sem gravação de áudio em arquivo e sem comandos de shell.
 
-| Função | Implementação |
-|---|---|
-| Modelo de linguagem | Qwen2.5-0.5B-Instruct GGUF via llama.cpp/JNI |
-| Reconhecimento de fala | Vosk `vosk-model-small-pt-0.3`, embarcado no APK |
-| Detecção de fala | Resultados parciais/finais do Vosk (sem limiar de volume) |
-| Síntese de voz | Piper VITS pt-BR Faber via sherpa-onnx, embarcado no APK |
-| Palavra de ativação | Experimental: gramática “ei bmo” no Vosk (limitada pelo vocabulário) |
-| Rostos | PNGs originais do projeto `be-more-agent`, sem redesenho |
-| Ações | Lista permitida de APIs Android; sem root e sem shell |
-
-O APK **não inclui o modelo GGUF** de linguagem. Os modelos de voz Vosk e Piper
-já estão dentro do APK e são extraídos automaticamente no primeiro uso.
-
----
-
-## Rostos originais
-
-Os 12 quadros usados vieram de `faces/` do projeto original e estão em
-`app/src/main/assets/faces/`:
+## Arquitetura
 
 ```text
-idle/       idle_01.png
-listening/  listen_01.png, listen_02.png
-thinking/   thinking_01.png ... thinking_04.png
-speaking/   speaking_01.png ... speaking_03.png
-error/      error_01.png
-warmup/     warmup_01.png
+┌─────────────────────────────┐        Wi-Fi local         ┌──────────────────────────────┐
+│ Celular Android             │                            │ PC Linux                     │
+│                             │  WebSocket bmo/1 + token   │                              │
+│  Rosto / Compose            │ <────────────────────────> │  FastAPI + Uvicorn           │
+│  AudioRecord 16 kHz PCM16   │      áudio binário         │  VAD por energia             │
+│  AudioTrack streaming       │                            │  whisper.cpp (STT)           │
+│  Android Keystore (token)   │                            │  Ollama (LLM)                │
+│  Serviço em 1º plano        │                            │  Piper / espeak-ng (TTS)     │
+│                             │       UDP 8766             │  cache de áudio em memória   │
+└─────────────────────────────┘                            └──────────────────────────────┘
 ```
 
-`BmoFaceView` apenas decodifica, escala e alterna esses PNGs. O fundo é a cor
-original `#BDFFCB`. As expressões seguem o estado real do assistente:
+O celular não executa LLM nem STT. O backend também não executa comandos arbitrários: as únicas ações locais autorizadas são `get_time` e `get_date`.
 
-- `LISTENING`: microfone ativo ou fala detectada;
-- `THINKING`: inferência ou execução de ação em andamento;
-- `SPEAKING`: somente enquanto há áudio sendo reproduzido;
-- `ERROR` / `CONFUSED`: falha real de ASR, TTS ou modelo;
-- `RESTING`: expressão de repouso escolhida nas configurações.
+## Requisitos
 
-Não há câmera, fotografia, análise de imagens ou lanterna. Essas permissões e
-dependências foram removidas do manifesto e do código.
+### PC
 
----
+- Linux (testado no Fedora 44), Python 3.11+.
+- `ffmpeg` (usado pelo teste E2E), `espeak-ng` (fallback de voz).
+- [Ollama](https://ollama.com/) com um modelo local, por padrão `qwen3.5:2b`.
+- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) com modelo `ggml-base.bin`.
+- [Piper](https://github.com/rhasspy/piper) com voz `pt_BR-faber-medium.onnx` (opcional se espeak-ng estiver disponível).
+- Portas `8765/tcp` e `8766/udp` liberadas na rede local.
 
-## Como compilar
+### Android
 
-Requisitos:
+- Android 8.0+ (API 26+). Testado em Android 17 (API 37).
+- Permissão de microfone.
+- Mesma rede Wi-Fi do PC, ou USB com `adb reverse` para testes.
+- APK de depuração para desenvolvimento; release para uso normal.
 
-- JDK 21
-- Android SDK com API 34
-- NDK `27.2.12479018`
-- CMake `3.22.1`
+## Início rápido
 
-Exemplo no ambiente usado no desenvolvimento:
+### 1. Preparar o backend
 
 ```bash
-export JAVA_HOME=/home/re/.jdks/jbr-21.0.11
-export PATH="$JAVA_HOME/bin:$PATH"
-export ANDROID_HOME=/home/re/Android/Sdk
-
-./gradlew :app:assembleDebug --no-daemon
+cd /caminho/para/BMOApp
+./scripts/setup_backend.sh
 ```
 
-APK gerado:
+O script cria `backend/.venv`, instala as dependências Python, gera o token em `backend/data/token` e confere as ferramentas. Ele não baixa modelos grandes automaticamente; siga [docs/INSTALACAO.md](docs/INSTALACAO.md) para instalar Whisper, Piper e o modelo do Ollama.
 
-```text
-app/build/outputs/apk/debug/app-debug.apk
-```
-
-O projeto nativo fica em `app/src/main/cpp/` (llama.cpp vendorizado + ponte JNI
-`bmo_jni.cpp`). O sherpa-onnx vem de `app/libs/sherpa-onnx-1.10.44.aar`.
-
----
-
-## Instalação no aparelho
+Inicie o Ollama e baixe o modelo, se ainda não existir:
 
 ```bash
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+ollama serve
+ollama pull qwen3.5:2b
 ```
 
-### Copiar o modelo GGUF
-
-O arquivo usado nos testes foi:
-
-```text
-qwen2.5-0.5b-instruct-q8_0-Q4_K_M-requant.gguf
-```
-
-Copie-o para a pasta privada externa do app:
+Inicie o backend:
 
 ```bash
-adb shell mkdir -p /sdcard/Android/data/com.spacexjr.bmo/files/models
-adb push qwen2.5-0.5b-instruct-q8_0-Q4_K_M-requant.gguf \
-  /sdcard/Android/data/com.spacexjr.bmo/files/models/
+./backend/run.sh
 ```
 
-Ao abrir o app, ele procura automaticamente um arquivo `.gguf` nessa pasta,
-dando prioridade a nomes com `qwen2.5`. Também é possível escolher outro GGUF em
-**Configurações → Inteligência artificial → Selecionar arquivo GGUF**. Nada é
-baixado automaticamente.
+Saída esperada: API em `http://0.0.0.0:8765` e descoberta UDP na porta 8766. O token está em:
 
-> O modelo é carregado em memória e ocupa cerca de 0,5 GB de RAM, além do
-> contexto. O aparelho precisa ter espaço e memória livres.
+```bash
+cat backend/data/token
+```
 
----
+### 2. Gerar e instalar o APK
+
+```bash
+./scripts/build_android.sh debug
+adb install -r android-app/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Para release assinado, veja [Build](#build). O APK release fica em `android-app/app/build/outputs/apk/release/app-release.apk`.
+
+### 3. Configurar no celular
+
+1. Abra o app. A tela deve mostrar somente o rosto do BMO.
+2. Toque no rosto para mostrar os controles.
+3. Toque em **⚙ Ajustes** (ou toque e segure o rosto).
+4. Informe o IP do PC, a porta `8765` e o token de `backend/data/token`.
+5. Toque em **Testar**. Devem aparecer LLM, STT e TTS como `ok`.
+6. Toque em **Salvar e conectar**.
+7. Toque no botão do microfone e diga **“Ei, BMO”** seguido do pedido.
+
+Atalho de desenvolvimento: o APK debug aceita extras de conexão:
+
+```bash
+adb install -r android-app/app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n br.com.bmoapp.debug/br.com.bmoapp.MainActivity \
+  --es bmo_host 192.168.3.24 \
+  --ei bmo_port 8765 \
+  --es bmo_token "$(cat backend/data/token)"
+```
+
+Troque `192.168.3.24` pelo IP do seu PC. Em caso de bloqueio de Wi-Fi, para teste via USB:
+
+```bash
+adb reverse tcp:8765 tcp:8765
+adb shell am start -n br.com.bmoapp.debug/br.com.bmoapp.MainActivity \
+  --es bmo_host 127.0.0.1 --ei bmo_port 8765 \
+  --es bmo_token "$(cat backend/data/token)"
+```
+
+O `adb reverse` é só para desenvolvimento; não substitui a conexão Wi-Fi real.
 
 ## Uso
 
-- **Toque no rosto:** começa a ouvir; se estiver falando, interrompe a fala;
-  se estiver ouvindo, encerra a escuta.
-- **Toque duplo:** cancela geração, fala e escuta.
-- **Toque longo:** abre as configurações.
-- **Ícone de teclado:** abre a conversa por texto.
-- **Ícone de engrenagem:** abre as configurações.
+- **Rosto somente:** o app abre sem botões. Toque no rosto para revelar os controles.
+- **Ajustes:** toque no rosto e depois em **⚙ Ajustes**, ou toque e segure o rosto.
+- **Falar agora:** ativa o microfone e ignora a palavra de ativação uma vez.
+- **Digitar:** abre uma conversa por texto, útil se o microfone ou o TTS falharem.
+- **Microfone:** o botão redondo inicia/para a captura. Com a escuta em segundo plano ativa, o serviço mantém o microfone com a tela apagada.
+- **Parar fala:** interrompe a reprodução e a resposta em andamento.
+- **Testar alto-falante:** emite um tom de 440 Hz.
+- **Testar microfone:** mostra o nível local; não envia áudio ao PC.
 
-As respostas são faladas quando a síntese está ligada. O texto gerado é limpo
-antes do TTS: markdown, URLs, emojis e símbolos não são pronunciados.
+### Palavra de ativação
 
-### Comandos diretos
+A palavra de ativação é **baseada na transcrição**. O áudio é transcrito pelo Whisper.cpp e o texto normalizado é comparado com `ei bmo`, `ei bemo`, `hey bmo`, `oi bmo`, `e bmo` e `bmo`.
 
-Alguns comandos explícitos não passam pelo modelo; executam a ação real e
-respondem com o resultado, reduzindo latência e evitando invenções:
+Isso **não** é um detector acústico treinado para “Ei, BMO”. O arquivo `wakeword_hey_jarvis.onnx` do projeto original é o modelo “Hey Jarvis” e é preservado apenas como referência; ele não é usado como detector principal. Veja [docs/LIMITACOES.md](docs/LIMITACOES.md).
 
-- “Que horas são?”
-- “Que dia é hoje?”
-- “Qual a bateria?”
-- “Qual é o aparelho?”
-- “Volume 40”
-- “Abrir Wi-Fi”, “abrir Bluetooth”, “abrir configurações de tela”
-- “Abrir WhatsApp”, “abrir Relógio”
+## Build
 
-Outras frases seguem para o Qwen2.5, que pode solicitar uma ferramenta da lista
-permitida. Toda ação retorna sucesso ou uma mensagem de erro real; o app não
-finge que executou algo.
+### Debug
 
-Ações permitidas: hora, data, abrir aplicativo instalado, abrir uma tela de
-configurações do Android, bateria, informações do aparelho, volume de mídia e
-lista de apps. Não há shell, root, execução de código arbitrário, câmera,
-fotografia ou lanterna.
+```bash
+./scripts/build_android.sh debug
+```
 
----
+Saída: `android-app/app/build/outputs/apk/debug/app-debug.apk`
 
-## Voz e detecção de fala
+### Release assinado
 
-1. O microfone grava PCM 16 kHz mono com `AudioRecord`.
-2. O **Vosk** transcreve continuamente.
-3. O início da fala é confirmado quando o Vosk devolve um texto parcial válido.
-4. O fim é confirmado pelo resultado final do Vosk ou por cerca de 1,1 s sem
-   novas hipóteses parciais.
-5. Se houver fala válida, o texto é enviado ao assistente.
-6. A resposta é sintetizada pelo Piper e reproduzida localmente.
+O projeto não guarda a chave de assinatura no repositório. Gere uma chave local uma vez:
 
-Essa detecção usa o próprio reconhecedor, não um limiar de RMS. Isso melhora a
-captura de fala baixa e evita abrir o microfone por ruído alto isolado. Se o
-Vosk não reconhecer nenhuma palavra em 6 s, o app avisa e volta ao repouso.
+```bash
+./scripts/generate_release_keystore.sh
+```
 
-A palavra de ativação “Ei, BMO” também usa Vosk, com uma gramática restrita.
-Ela funciona **somente com o app aberto** (não há serviço em segundo plano) e
-não substitui um detector neural dedicado de wake word.
+Depois:
 
-> **Limitação real:** o modelo `vosk-model-small-pt-0.3` não possui a palavra
-> “bmo” no vocabulário; o próprio Vosk registra que ignora esse termo ao montar
-> a gramática. Por isso o recurso está marcado como **experimental** e pode não
-> disparar. O toque no rosto e a conversa por texto são os métodos confiáveis.
-> O projeto original possui um `wakeword.onnx` do openWakeWord; integrá-lo ao
-> Android exigiria ONNX Runtime e o pipeline de mel-espectrograma/embedding.
+```bash
+./scripts/build_android.sh release
+```
 
----
+O script lê `android-app/keystore/keystore.properties` e exporta `BMO_KEYSTORE`, `BMO_KEY_ALIAS`, `BMO_STORE_PASSWORD` e `BMO_KEY_PASSWORD` para o Gradle. O APK fica em:
 
-## Configurações funcionais
+```text
+android-app/app/build/outputs/apk/release/app-release.apk
+```
 
-- Modelo GGUF: selecionar, carregar/recarregar, descarregar e ver o caminho.
-- Contexto, limite de tokens, threads e quantidade de mensagens do histórico.
-- Apagar o histórico da conversa.
-- Reconhecimento de voz, síntese de voz e palavra de ativação.
-- Velocidade e volume da voz, teste de fala e botão para parar.
-- Expressão de repouso, prévia e escala do rosto.
-- Diagnóstico com versão, Android, aparelho, RAM, PSS, modelo, estado do ASR/TTS,
-  wake word e últimas mensagens de erro/latência.
+Verificação da assinatura:
 
-Alterações de contexto, threads ou modelo exigem **Carregar / recarregar** para
-valer no motor nativo. O app não recarrega o GGUF ao apenas voltar para a tela
-principal: se o caminho, o contexto e as threads não mudaram, o modelo já
-carregado é reutilizado.
+```bash
+"$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs \
+  android-app/app/build/outputs/apk/release/app-release.apk
+```
 
----
+Os APKs e a pasta `android-app/keystore/` estão no `.gitignore`.
 
-## Privacidade e modo offline
+## Testes
 
-- O manifesto não solicita `INTERNET`.
-- Áudio, texto, histórico e modelo ficam no aparelho.
-- O histórico é mantido em memória e pode ser apagado.
-- Não há telemetria, conta, nuvem ou download automático.
-- O app depende apenas de permissões de microfone e ajuste de áudio.
+Backend:
 
----
+```bash
+cd backend
+.venv/bin/python -m pytest -q
+```
 
-## Problemas
-- Detecção de voz bugada
-- Algumas faces inutilizadas
-- Wake UP word não implementada
+Testes unitários do Android:
 
----
+```bash
+cd android-app
+./gradlew testDebugUnitTest
+```
 
-## Testes realizados no Galaxy A22
+Teste E2E com serviços reais (Whisper, Piper, Ollama e backend):
 
-Aparelho: SM-A225M, Android 16/API 36, 720×1600, arm64-v8a.
+```bash
+cd backend
+.venv/bin/python ../scripts/e2e_ws.py \
+  --text "Ei, BMO, que horas são?" \
+  --output /tmp/bmo-resposta-e2e.wav
+```
 
-- Build `assembleDebug` e instalação via ADB.
-- Carregamento real do Qwen2.5 Q4_K_M pelo llama.cpp.
-- Conversa por texto com respostas em pt-BR e TTS Piper local.
-- Prompt de conversa reduzido para **68 tokens**.
-- Com 4 threads: avaliação do prompt em **~3,1–4,3 s** e geração curta em
-  **~0,3–1,0 s**; primeira resposta total em **~3,5–5,3 s**.
-- Com cache KV entre turnos: resposta seguinte em **~1,7–1,9 s**.
-- Comando direto “que horas são” executou `get_current_time` e respondeu
-  “Agora são 22:15”.
-- Vosk carregou, detectou fala pelo resultado parcial e transcreveu áudio
-  ambiente real; o app respondeu ao texto reconhecido.
-- TTS iniciou e concluiu a reprodução local.
-- Correção de fala antiga: cada pedido de TTS recebe um identificador; uma
-  síntese nova invalida a anterior e resultados atrasados são descartados.
-- Modelo já carregado é preservado ao voltar para a atividade.
+Resultado registrado: **27 testes de backend** e **3 testes unitários Android** passaram, e o E2E real retornou transcrição, resposta e áudio. Detalhes e limitações em [docs/EVIDENCIAS_TESTES.md](docs/EVIDENCIAS_TESTES.md).
 
-Também foi observado que o protótipo físico pode receber toques fantasmas do
-touchscreen/carcaça durante os testes. Isso não é gerado pelo app; quando um
-toque real chega ao rosto, o comportamento esperado é iniciar a escuta.
+## Segurança e privacidade
 
----
-
-## Limitações atuais
-
-- **Latência:** a primeira resposta ainda leva alguns segundos, principalmente
-  pela avaliação do prompt no CPU do A22. A fala só começa após a geração do
-  texto completo; não há streaming de tokens para o TTS.
-- **Modelo pequeno:** o Qwen2.5-0.5B pode ignorar instruções de ferramenta ou
-  produzir respostas estranhas. Por isso os comandos de aparelho mais comuns têm
-  caminho direto determinístico.
-- **Palavra de ativação:** usa gramática Vosk, apenas com o app em primeiro
-  plano. O vocabulário do Vosk pequeno não contém “bmo”, então o recurso é
-  experimental e pode não disparar. Não foi validado em ambientes de ruído.
-- **Uma única voz:** o APK inclui apenas Piper pt-BR Faber; não há seletor
-  fictício de várias vozes.
-- **Sem serviço em segundo plano:** ao sair do app, escuta, fala e geração são
-  interrompidas.
-- **Sem câmera/fotografia/lanterna**, por decisão de escopo.
-
----
+- O backend escuta na rede local e exige token Bearer em HTTP e WebSocket.
+- O app guarda o token cifrado com AES/GCM e chave do Android Keystore.
+- Não há câmera, permissão de câmera, upload para nuvem ou comando de shell.
+- Áudio de microfone é transmitido em tempo real, sem gravação em arquivo.
+- O backend mantém histórico de conversa apenas em memória por sessão.
+- A API usa **HTTP sem TLS** para funcionar offline em LAN. Não exponha a porta 8765 à internet.
+- Leia [docs/SEGURANCA_E_PRIVACIDADE.md](docs/SEGURANCA_E_PRIVACIDADE.md).
 
 ## Estrutura do projeto
 
 ```text
-app/src/main/java/com/spacexjr/bmo/
-  BmoApp.kt                    inicialização dos motores
-  MainActivity.kt              tela cheia, toques, diálogo de texto
-  SettingsActivity.kt          configurações e diagnóstico
-  BmoAssistant.kt              orquestração, histórico, prompt, ações
-  actions/ActionManager.kt     ações Android permitidas
-  data/SettingsRepository.kt   preferências e migração do modelo
-  data/LocalModelStore.kt      extração de Vosk/Piper
-  data/DiagnosticsManager.kt   logs e latência
-  face/BmoFaceView.kt          renderização dos PNGs originais
-  face/ExpressionManager.kt    catálogo das expressões
-  llm/LlmEngine.kt             carregamento/geração e cache de modelo
-  speech/SpeechRecognizerManager.kt  ASR Vosk + VAD por parciais
-  speech/TextToSpeechManager.kt      TTS Piper + cancelamento por geração
-  speech/VoskModelProvider.kt        modelo Vosk local
-  speech/WakeWordManager.kt          palavra de ativação
-
-app/src/main/cpp/
-  bmo_jni.cpp                  ponte JNI, prompt, geração e tempos
-  llama.cpp/                   llama.cpp vendorizado
-
-app/src/main/assets/
-  faces/                       PNGs originais
-  models/vosk-pt.zip           modelo Vosk pt-BR
-  models/tts-pt.zip            voz Piper pt-BR
+backend/                 FastAPI, VAD, STT, LLM, TTS, protocolo e testes
+  bmo_backend/
+  tests/
+  config.json
+  run.sh
+android-app/             App Android (Kotlin + Compose)
+  app/src/main/java/br/com/bmoapp/
+  app/src/main/assets/faces/
+  app/build.gradle.kts
+assets/                  Rosto original, licença e wakeword legado
+docs/                    Instalação, protocolo, segurança, limitações e evidências
+protocol/schemas/        Esquemas JSON do protocolo bmo/1
+scripts/                 Setup, build, E2E e utilitários
+tools/                   Binários/modelos locais (não versionados)
 ```
+
+## Documentação
+
+- [Instalação](docs/INSTALACAO.md)
+- [Protocolo bmo/1](docs/PROTOCOLO.md)
+- [Segurança e privacidade](docs/SEGURANCA_E_PRIVACIDADE.md)
+- [Solução de problemas](docs/SOLUCAO_DE_PROBLEMAS.md)
+- [Limitações conhecidas](docs/LIMITACOES.md)
+- [Evidências de teste](docs/EVIDENCIAS_TESTES.md)
+
+## Licença e créditos
+
+Os rostos e o arquivo `wakeword_hey_jarvis.onnx` vêm do projeto original `be-more-agent`. Consulte [assets/ORIGINAL_LICENSE](assets/ORIGINAL_LICENSE). O código deste projeto é de uso local/educacional; revise as licenças das ferramentas e modelos de terceiros (Whisper.cpp, Piper, Ollama e modelos baixados) antes de redistribuir.
