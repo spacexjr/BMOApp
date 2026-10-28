@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "BMOApp"
+rootProject.name = "saturnBMO"
 include(":app")

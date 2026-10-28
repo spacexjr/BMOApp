@@ -16,6 +16,7 @@ O celular Android é a interface: mostra apenas o rosto do BMO em paisagem, capt
 - Detecção de fala por energia (VAD) no PC.
 - Transcrição local com whisper.cpp.
 - Respostas locais de hora/data sem passar pelo LLM.
+- Clima e previsão de chuva pela internet, usando o GPS do celular para localizar você.
 - Conversa com Ollama em português do Brasil.
 - Voz local com Piper (pt-BR) e fallback para espeak-ng.
 - WebSocket autenticado por token e protocolo versionado `bmo/1`.
@@ -67,7 +68,7 @@ O celular não executa LLM nem STT. O backend também não executa comandos arbi
 ### 1. Preparar o backend
 
 ```bash
-cd /caminho/para/BMOApp
+cd /caminho/para/saturnBMO
 ./scripts/setup_backend.sh
 ```
 
@@ -109,13 +110,14 @@ Para release assinado, veja [Build](#build). O APK release fica em `android-app/
 4. Informe o IP do PC, a porta `8765` e o token de `backend/data/token`.
 5. Toque em **Testar**. Devem aparecer LLM, STT e TTS como `ok`.
 6. Toque em **Salvar e conectar**.
-7. Toque no botão do microfone e diga **“Ei, BMO”** seguido do pedido.
+7. Autorize a localização quando o app pedir (ou use **Ajustes → Localização (clima)**). Ela é usada apenas para o clima.
+8. Toque no botão do microfone e diga **“Ei, BMO”** seguido do pedido.
 
 Atalho de desenvolvimento: o APK debug aceita extras de conexão:
 
 ```bash
 adb install -r android-app/app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n br.com.bmoapp.debug/br.com.bmoapp.MainActivity \
+adb shell am start -n com.spacexjr.saturnbmo.debug/com.spacexjr.saturnbmo.MainActivity \
   --es bmo_host 192.168.3.24 \
   --ei bmo_port 8765 \
   --es bmo_token "$(cat backend/data/token)"
@@ -125,7 +127,7 @@ Troque `192.168.3.24` pelo IP do seu PC. Em caso de bloqueio de Wi-Fi, para test
 
 ```bash
 adb reverse tcp:8765 tcp:8765
-adb shell am start -n br.com.bmoapp.debug/br.com.bmoapp.MainActivity \
+adb shell am start -n com.spacexjr.saturnbmo.debug/com.spacexjr.saturnbmo.MainActivity \
   --es bmo_host 127.0.0.1 --ei bmo_port 8765 \
   --es bmo_token "$(cat backend/data/token)"
 ```
@@ -213,13 +215,14 @@ cd backend
   --output /tmp/bmo-resposta-e2e.wav
 ```
 
-Resultado registrado: **27 testes de backend** e **3 testes unitários Android** passaram, e o E2E real retornou transcrição, resposta e áudio. Detalhes e limitações em [docs/EVIDENCIAS_TESTES.md](docs/EVIDENCIAS_TESTES.md).
+Resultado registrado: **36 testes de backend** e **3 testes unitários Android** passaram, e o E2E real retornou transcrição, resposta e áudio. Detalhes e limitações em [docs/EVIDENCIAS_TESTES.md](docs/EVIDENCIAS_TESTES.md).
 
 ## Segurança e privacidade
 
 - O backend escuta na rede local e exige token Bearer em HTTP e WebSocket.
 - O app guarda o token cifrado com AES/GCM e chave do Android Keystore.
 - Não há câmera, permissão de câmera, upload para nuvem ou comando de shell.
+- A consulta de clima envia apenas as coordenadas do GPS do celular (ou cidade/coordenadas configuradas manualmente) ao Open-Meteo; o nome da cidade pode ser consultado no BigDataCloud. Áudio e texto da conversa não saem do PC.
 - Áudio de microfone é transmitido em tempo real, sem gravação em arquivo.
 - O backend mantém histórico de conversa apenas em memória por sessão.
 - A API usa **HTTP sem TLS** para funcionar offline em LAN. Não exponha a porta 8765 à internet.
@@ -234,7 +237,7 @@ backend/                 FastAPI, VAD, STT, LLM, TTS, protocolo e testes
   config.json
   run.sh
 android-app/             App Android (Kotlin + Compose)
-  app/src/main/java/br/com/bmoapp/
+  app/src/main/java/com/spacexjr/saturnbmo/
   app/src/main/assets/faces/
   app/build.gradle.kts
 assets/                  Rosto original, licença e wakeword legado

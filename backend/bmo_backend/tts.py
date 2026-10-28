@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 import shutil
 import tempfile
 import wave
@@ -17,6 +18,32 @@ from typing import Any
 from .audio import split_wav
 
 log = logging.getLogger("bmo.tts")
+
+# Emojis e símbolos pictográficos. O Piper/espeak-ng tentam "ler" esses
+# caracteres (por exemplo, falando "rosto sorridente"), então eles são
+# removidos apenas do texto falado; a resposta escrita continua intacta.
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001F000-\U0001FAFF"  # emojis, bandeiras, símbolos e pictogramas
+    "\U00002600-\U000027BF"  # símbolos diversos e dingbats (☀, ❤, ✅)
+    "\U0001F1E6-\U0001F1FF"  # letras de indicador regional (bandeiras)
+    "\U00002B00-\U00002BFF"  # símbolos e setas diversas
+    "\U00002300-\U000023FF"  # símbolos técnicos (⌚, ⏰)
+    "\U0000FE00-\U0000FE0F"  # seletores de variação
+    "\U0000200D"             # ZWJ
+    "\U000020E3"             # keycap
+    "\U000E0020-\U000E007F"  # tags de bandeiras
+    "\U0001F3FB-\U0001F3FF"  # tons de pele
+    "]+"
+)
+
+
+def clean_for_speech(text: str) -> str:
+    """Remove emojis e normaliza espaços antes de enviar o texto ao TTS."""
+    text = _EMOJI_RE.sub("", text)
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    return text.strip()
 
 
 class TtsUnavailable(RuntimeError):
@@ -101,7 +128,7 @@ class TtsService:
         }
 
     async def synthesize(self, text: str) -> TtsAudio:
-        text = text.strip()
+        text = clean_for_speech(text)
         if not text:
             raise TtsError("Texto vazio para síntese.")
         if len(text) > self.max_chars:

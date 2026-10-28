@@ -1,16 +1,18 @@
-package br.com.bmoapp
+package com.spacexjr.saturnbmo
 
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.location.Location
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
-import br.com.bmoapp.audio.AudioCapture
-import br.com.bmoapp.audio.AudioPlayer
-import br.com.bmoapp.net.BmoClient
-import br.com.bmoapp.net.ServerDiscovery
+import com.spacexjr.saturnbmo.audio.AudioCapture
+import com.spacexjr.saturnbmo.audio.AudioPlayer
+import com.spacexjr.saturnbmo.location.BmoLocation
+import com.spacexjr.saturnbmo.net.BmoClient
+import com.spacexjr.saturnbmo.net.ServerDiscovery
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -39,6 +41,7 @@ class BmoEngine private constructor(context: Context) {
     private val store = SettingsStore(appContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val locationProvider = BmoLocation(appContext)
     private val http = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
@@ -68,6 +71,10 @@ class BmoEngine private constructor(context: Context) {
     private var audioStarted = false
     private var currentSampleRate = 22050
     private var currentChannels = 1
+    @Volatile
+    private var lastLocation: Location? = null
+    @Volatile
+    private var lastLocationAt = 0L
 
     init {
         player.updateVolume(settings.volume)
@@ -246,6 +253,53 @@ class BmoEngine private constructor(context: Context) {
         ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
 
+    // ------------------------------------------------------------------
+    // Localização (clima)
+    // ------------------------------------------------------------------
+
+    fun hasLocationPermission(): Boolean = locationProvider.hasPermission()
+
+    /** Obtém uma leitura nova e a envia ao backend para as consultas de clima. */
+    fun refreshLocation() {
+        if (!_ui.value.connected) return
+        if (!hasLocationPermission()) {
+            addLog("AVISO", "Localização sem permissão; o clima ficará sem coordenadas.")
+            return
+        }
+        if (lastLocation != null &&
+            System.currentTimeMillis() - lastLocationAt < LOCATION_MAX_AGE_MS
+        ) {
+            sendCurrentLocation()
+            return
+        }
+        locationProvider.requestCurrent { location ->
+            if (location == null) {
+                addLog("AVISO", "Não foi possível obter a localização do celular.")
+                return@requestCurrent
+            }
+            lastLocation = location
+            lastLocationAt = System.currentTimeMillis()
+            _ui.update { it.copy(locationReady = true) }
+            addLog(
+                "INFO",
+                "Localização obtida (precisão de aproximadamente ${location.accuracy.toInt()} m).",
+            )
+            sendCurrentLocation()
+        }
+    }
+
+    private fun sendCurrentLocation() {
+        val location = lastLocation ?: return
+        if (!_ui.value.connected) return
+        sendJson(
+            JSONObject()
+                .put("type", "location")
+                .put("latitude", location.latitude)
+                .put("longitude", location.longitude)
+                .put("accuracy", location.accuracy.toDouble())
+        )
+    }
+
     fun startListening(): Boolean {
         if (!_ui.value.connected) {
             fail("Conecte-se ao PC antes de ativar o microfone.")
@@ -293,6 +347,8 @@ class BmoEngine private constructor(context: Context) {
             fail("Não foi possível avisar o servidor sobre o áudio.")
             return false
         }
+        sendCurrentLocation()
+        refreshLocation()
         _ui.update {
             it.copy(
                 listening = true,
@@ -428,20 +484,35 @@ class BmoEngine private constructor(context: Context) {
             return
         }
         if (_ui.value.bmoState == BmoState.SPEAKING) interrupt()
-        val sent = sendJson(JSONObject().put("type", "text").put("text", clean))
-        if (sent) {
-            currentAssistantId = ""
-            _ui.update {
-                it.copy(
-                    transcript = clean,
-                    assistantText = "",
-                    streamingText = false,
-                    statusDetail = "Mensagem enviada.",
-                )
+        scope.launch {
+            // Se o GPS ainda não respondeu ou está antigo, espera um pouco para
+            // que a pergunta de clima já tenha coordenadas atualizadas.
+            val locationAge = System.currentTimeMillis() - lastLocationAt
+            if (hasLocationPermission() &&
+                (lastLocation == null || locationAge > LOCATION_MAX_AGE_MS)
+            ) {
+                locationProvider.awaitLocation(2500)?.let { location ->
+                    lastLocation = location
+                    lastLocationAt = System.currentTimeMillis()
+                    _ui.update { it.copy(locationReady = true) }
+                }
             }
-            addLog("USUÁRIO", if (clean.length > 120) clean.take(120) + "..." else clean)
-        } else {
-            fail("Não foi possível enviar a mensagem.")
+            sendCurrentLocation()
+            val sent = sendJson(JSONObject().put("type", "text").put("text", clean))
+            if (sent) {
+                currentAssistantId = ""
+                _ui.update {
+                    it.copy(
+                        transcript = clean,
+                        assistantText = "",
+                        streamingText = false,
+                        statusDetail = "Mensagem enviada.",
+                    )
+                }
+                addLog("USUÁRIO", if (clean.length > 120) clean.take(120) + "..." else clean)
+            } else {
+                fail("Não foi possível enviar a mensagem.")
+            }
         }
     }
 
@@ -695,6 +766,7 @@ class BmoEngine private constructor(context: Context) {
         }
         addLog("INFO", "Conectado ao backend (protocolo $protocol, sessão $session).")
         refreshServiceStatus()
+        refreshLocation()
         if (wantListening && capture?.isRunning != true) {
             startListening()
         }
@@ -828,6 +900,7 @@ class BmoEngine private constructor(context: Context) {
 
     companion object {
         private const val TAG = "BmoEngine"
+        private const val LOCATION_MAX_AGE_MS = 120_000L
 
         @Volatile
         private var instance: BmoEngine? = null

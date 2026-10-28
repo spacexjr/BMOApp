@@ -1,4 +1,4 @@
-package br.com.bmoapp
+package com.spacexjr.saturnbmo
 
 import android.content.Context
 import android.content.SharedPreferences

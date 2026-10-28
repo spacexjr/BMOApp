@@ -79,7 +79,7 @@ Se via USB funcionar, o problema é rede/firewall, não o backend:
 
 ```bash
 adb reverse tcp:8765 tcp:8765
-adb shell am start -n br.com.bmoapp.debug/br.com.bmoapp.MainActivity \
+adb shell am start -n com.spacexjr.saturnbmo.debug/com.spacexjr.saturnbmo.MainActivity \
   --es bmo_host 127.0.0.1 --ei bmo_port 8765 \
   --es bmo_token "$(cat backend/data/token)"
 ```
@@ -169,14 +169,21 @@ ls -l tools/whisper-models/ggml-base.bin
 
 - O binário precisa ser executável.
 - O modelo precisa existir no caminho configurado.
-- Teste manualmente com um WAV:
+- Teste manualmente com um WAV (o `LD_LIBRARY_PATH` garante que as bibliotecas
+  `.so` sejam encontradas mesmo se o projeto for movido ou renomeado):
 
   ```bash
+  LD_LIBRARY_PATH="$PWD/tools/whisper.cpp/build/bin" \
   tools/whisper.cpp/build/bin/whisper-cli \
     -m tools/whisper-models/ggml-base.bin \
     -f /caminho/audio.wav -l pt -otxt -of /tmp/transcricao
   cat /tmp/transcricao.txt
   ```
+
+- Se aparecer `libwhisper.so.1: cannot open shared object file`, o `RUNPATH`
+  gravado no `whisper-cli` ainda aponta para o caminho antigo do projeto.
+  O backend já contorna isso automaticamente; para uso manual, mantenha o
+  `LD_LIBRARY_PATH` acima ou recompile o whisper.cpp no caminho atual.
 
 ## O serviço em segundo plano para sozinho
 
@@ -206,11 +213,11 @@ adb shell settings put system accelerometer_rotation 1
 
 ## Instalação do APK release falha
 
-- O release usa applicationId `br.com.bmoapp`; o debug usa `br.com.bmoapp.debug`.
+- O release usa applicationId `com.spacexjr.saturnbmo`; o debug usa `com.spacexjr.saturnbmo.debug`.
 - Se já houver uma versão com assinatura diferente, desinstale antes:
 
   ```bash
-  adb uninstall br.com.bmoapp
+  adb uninstall com.spacexjr.saturnbmo
   adb install -r android-app/app/build/outputs/apk/release/app-release.apk
   ```
 

@@ -77,6 +77,15 @@ class FakeTts:
         return self.audio
 
 
+class FakeWeather:
+    def __init__(self):
+        self.calls = []
+
+    async def answer(self, intent, latitude=None, longitude=None):
+        self.calls.append((intent, latitude, longitude))
+        return f"Clima de teste para {intent.kind}."
+
+
 def make_config(tmp_path):
     cfg = copy.deepcopy(DEFAULT_CONFIG)
     cfg["_token"] = TOKEN
@@ -89,10 +98,12 @@ def make_config(tmp_path):
 def make_app(tmp_path, stt_text="Ei, BMO, que horas são?"):
     cfg = make_config(tmp_path)
     stt = FakeStt(stt_text)
+    weather = FakeWeather()
     services = Services(
         cfg,
         stt=stt,
         tts=FakeTts(),
+        weather=weather,
         brain_factory=lambda: FakeBrain(),
     )
     app = create_app(cfg, services=services)
@@ -160,6 +171,45 @@ def test_http_llm_roundtrip(tmp_path):
         assert data["audio_available"] is False
 
 
+def test_http_weather_roundtrip(tmp_path):
+    app, services, _ = make_app(tmp_path)
+    with TestClient(app) as client:
+        headers = {"Authorization": f"Bearer {TOKEN}"}
+        response = client.post(
+            "/api/v1/text",
+            headers=headers,
+            json={
+                "text": "Ei BMO, vai chover hoje?",
+                "session_id": "clima",
+                "speak": False,
+                "latitude": -23.5505,
+                "longitude": -46.6333,
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["action"] == "get_weather"
+        assert data["text"] == "Clima de teste para rain."
+        assert services.weather.calls[-1][1:] == (-23.5505, -46.6333)
+
+
+def test_http_weather_rejects_partial_location(tmp_path):
+    app, _, _ = make_app(tmp_path)
+    with TestClient(app) as client:
+        headers = {"Authorization": f"Bearer {TOKEN}"}
+        response = client.post(
+            "/api/v1/text",
+            headers=headers,
+            json={
+                "text": "Ei BMO, vai chover hoje?",
+                "speak": False,
+                "latitude": -23.5505,
+            },
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "invalid_location"
+
+
 def test_websocket_text_events(tmp_path):
     app, _, _ = make_app(tmp_path)
     with TestClient(app) as client:
@@ -192,6 +242,42 @@ def test_websocket_text_events(tmp_path):
             assert "audio.start" in seen
             assert "audio.end" in seen
             assert got_audio
+
+
+def test_websocket_weather_uses_location(tmp_path):
+    app, services, _ = make_app(tmp_path)
+    with TestClient(app) as client:
+        with client.websocket_connect(
+            "/ws", headers={"Authorization": f"Bearer {TOKEN}"}
+        ) as ws:
+            ws.receive_json()  # hello
+            ws.receive_json()  # state
+            ws.send_json(
+                {
+                    "type": "hello",
+                    "protocol": "bmo/1",
+                    "latitude": -23.5505,
+                    "longitude": -46.6333,
+                }
+            )
+            assert ws.receive_json()["type"] == "hello.ok"
+            ws.send_json(
+                {
+                    "type": "location",
+                    "latitude": -25.74,
+                    "longitude": -52.12,
+                    "accuracy": 12.5,
+                }
+            )
+            assert ws.receive_json()["type"] == "location.ok"
+            ws.send_json({"type": "text", "text": "Ei BMO, vai chover hoje?"})
+            for _ in range(40):
+                event = ws.receive_json()
+                if event["type"] == "assistant.text.done":
+                    break
+            intent, latitude, longitude = services.weather.calls[-1]
+            assert intent.kind == "rain"
+            assert (latitude, longitude) == (-25.74, -52.12)
 
 
 def test_websocket_rejects_bad_token(tmp_path):

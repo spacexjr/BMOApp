@@ -35,7 +35,7 @@ O servidor aceita a conexão, valida o token e envia imediatamente um evento `he
     "mode": "transcript",
     "phrases": ["ei bmo", "ei bemo", "hey bmo", "oi bmo", "e bmo", "bmo"]
   },
-  "capabilities": ["text", "audio", "tts", "vad", "get_time", "get_date"]
+  "capabilities": ["text", "audio", "tts", "vad", "get_time", "get_date", "get_weather"]
 }
 ```
 
@@ -51,7 +51,7 @@ O cliente envia seu `hello`:
 {
   "type": "hello",
   "protocol": "bmo/1",
-  "client": "BMOApp Android",
+  "client": "saturnBMO Android",
   "client_version": "0.1.0"
 }
 ```
@@ -70,8 +70,9 @@ Todas as mensagens são objetos JSON com `type`. Tipos desconhecidos são rejeit
 
 | `type` | Campos | Descrição |
 |---|---|---|
-| `hello` | `protocol?`, `client?`, `client_version?` | Identificação do cliente. |
+| `hello` | `protocol?`, `client?`, `client_version?`, `latitude?`, `longitude?` | Identificação do cliente; pode incluir a localização inicial. |
 | `ping` | `ts?` | Keepalive; o servidor responde `pong`. |
+| `location` | `latitude`, `longitude`, `accuracy?` | Envia coordenadas do GPS para as consultas de clima. `accuracy` é a precisão em metros. |
 | `activate` | — | Ativação manual: ignora a palavra de ativação na próxima fala. |
 | `audio.start` | `format?`, `sample_rate?`, `channels?` | Inicia o envio de áudio. Formato aceito: `pcm_s16le`, mono, 8000–48000 Hz. |
 | `audio.end` | — | Encerra o envio e finaliza a fala pendente no VAD. |
@@ -103,6 +104,7 @@ Todos têm `type`, `seq` e `ts`, salvo indicação em contrário.
 |---|---|---|
 | `hello` | `protocol`, `server_version`, `session_id`, `audio`, `wakeword`, `capabilities` | Saudação inicial. |
 | `hello.ok` | `protocol`, `session_id` | Resposta ao `hello` do cliente. |
+| `location.ok` | `latitude`, `longitude` | Coordenadas aceitas e guardadas na sessão. |
 | `pong` | `echo?`, `server_ts` | Resposta ao `ping`. |
 | `state` | `state`, `detail` | Estado global: `idle`, `listening`, `thinking`, `speaking`, `error`. |
 | `audio.ready` | `format`, `sample_rate`, `channels` | Servidor pronto para receber áudio. |
@@ -214,19 +216,23 @@ Exemplo de `POST /api/v1/text`:
 
 ```json
 {
-  "text": "Ei, BMO, que horas são?",
+  "text": "Ei, BMO, vai chover hoje?",
   "session_id": "http",
-  "speak": true
+  "speak": true,
+  "latitude": -23.5505,
+  "longitude": -46.6333
 }
 ```
+
+`latitude` e `longitude` são opcionais, mas devem ser enviadas juntas. Elas permitem consultar o clima por HTTP sem configurar cidade no backend. Se o pedido for de clima e não houver coordenadas nem cidade configurada, a resposta é o erro `weather_unavailable`.
 
 Resposta:
 
 ```json
 {
   "id": "abc123",
-  "text": "Agora são 21:55.",
-  "action": "get_time",
+  "text": "Sim, há previsão de chuva para hoje: chance de 63% e garoa leve.",
+  "action": "get_weather",
   "audio": {
     "url": "/api/v1/audio/def456.wav",
     "format": "wav",
@@ -278,9 +284,11 @@ O app usa broadcast para achar o PC, mas o token continua obrigatório.
 | `invalid_sample_rate` | Taxa fora de 8000–48000. |
 | `unsupported_channels` | Canais diferentes de 1. |
 | `invalid_text` / `empty_text` / `text_too_long` | Texto inválido. |
+| `invalid_location` | Latitude/longitude ausentes, fora do intervalo ou `accuracy` inválida. |
 | `stt_unavailable` / `stt_error` | Whisper indisponível ou falhou. |
 | `llm_unavailable` / `llm_error` | Ollama indisponível ou falhou. |
 | `tts_error` | Piper/espeak-ng falhou. |
+| `weather_error` / `weather_unavailable` | Clima falhou ou GPS não foi autorizado/enviado. |
 | `empty_answer` | LLM não retornou texto. |
 | `internal_error` | Falha inesperada no backend. |
 

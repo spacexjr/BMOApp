@@ -1,4 +1,4 @@
-package br.com.bmoapp.ui
+package com.spacexjr.saturnbmo.ui
 
 import android.Manifest
 import android.content.Context
@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -25,9 +26,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import br.com.bmoapp.AppSettings
-import br.com.bmoapp.BmoEngine
-import br.com.bmoapp.service.BmoForegroundService
+import com.spacexjr.saturnbmo.AppSettings
+import com.spacexjr.saturnbmo.BmoEngine
+import com.spacexjr.saturnbmo.service.BmoForegroundService
 
 private enum class Screen { MAIN, SETTINGS }
 
@@ -36,6 +37,7 @@ fun BmoApp(engine: BmoEngine) {
     var screen by remember { mutableStateOf(Screen.MAIN) }
     var settings by remember { mutableStateOf(engine.currentSettings()) }
     var pendingActivate by remember { mutableStateOf(false) }
+    var locationPrompted by remember { mutableStateOf(false) }
     val ui by engine.uiState.collectAsStateWithLifecycle()
     val logs by engine.logs.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -72,6 +74,33 @@ fun BmoApp(engine: BmoEngine) {
             ).show()
         }
         pendingActivate = false
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        if (engine.hasLocationPermission()) {
+            engine.refreshLocation()
+        } else {
+            Toast.makeText(
+                context,
+                "Sem a permissão de localização o clima não sabe onde você está.",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    // O GPS é necessário apenas para o clima; pede uma vez após conectar.
+    LaunchedEffect(ui.connected) {
+        if (ui.connected && !locationPrompted && !engine.hasLocationPermission()) {
+            locationPrompted = true
+            locationPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                )
+            )
+        }
     }
 
     val beginListening: (Boolean) -> Unit = { activate ->

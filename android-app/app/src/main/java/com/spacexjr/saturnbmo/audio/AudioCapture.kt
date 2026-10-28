@@ -1,4 +1,4 @@
-package br.com.bmoapp.audio
+package com.spacexjr.saturnbmo.audio
 
 import android.Manifest
 import android.annotation.SuppressLint

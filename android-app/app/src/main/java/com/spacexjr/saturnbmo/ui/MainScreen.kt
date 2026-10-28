@@ -1,4 +1,4 @@
-package br.com.bmoapp.ui
+package com.spacexjr.saturnbmo.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -49,10 +49,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import br.com.bmoapp.AppSettings
-import br.com.bmoapp.BmoState
-import br.com.bmoapp.BmoUiState
-import br.com.bmoapp.ConnectionState
+import com.spacexjr.saturnbmo.AppSettings
+import com.spacexjr.saturnbmo.BmoState
+import com.spacexjr.saturnbmo.BmoUiState
+import com.spacexjr.saturnbmo.ConnectionState
 import kotlin.math.abs
 import kotlin.math.sin
 

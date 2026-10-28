@@ -1,7 +1,7 @@
-package br.com.bmoapp.net
+package com.spacexjr.saturnbmo.net
 
 import android.util.Log
-import br.com.bmoapp.AppSettings
+import com.spacexjr.saturnbmo.AppSettings
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -48,7 +48,7 @@ class BmoClient(private val listener: Listener) {
                 val hello = JSONObject()
                     .put("type", "hello")
                     .put("protocol", "bmo/1")
-                    .put("client", "BMOApp Android")
+                    .put("client", "saturnBMO Android")
                     .put("client_version", BuildInfo.VERSION)
                 webSocket.send(hello.toString())
                 listener.onOpen()

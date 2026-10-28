@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "br.com.bmoapp"
+    namespace = "com.spacexjr.saturnbmo"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "br.com.bmoapp"
+        applicationId = "com.spacexjr.saturnbmo"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

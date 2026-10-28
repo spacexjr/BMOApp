@@ -12,6 +12,7 @@ Você precisa de:
 4. Whisper.cpp com modelo de reconhecimento de fala.
 5. Piper com voz pt-BR **ou** espeak-ng como fallback.
 6. APK instalado no celular.
+7. Internet no PC apenas para a consulta de clima (opcional).
 
 O celular não precisa de internet, apenas de acesso ao PC.
 
@@ -200,7 +201,39 @@ export BMO_TOKEN="um-token-longo-e-aleatorio"
 
 O app guarda o token cifrado com Android Keystore. O token não deve ser colocado em prints, issues ou repositórios.
 
-## 8. Iniciar o backend
+## 8. Clima e previsão do tempo
+
+O BMO consulta temperatura e previsão de chuva pela internet usando o **Open-Meteo**, sem chave de API. A localização vem do **GPS do celular** (ou da rede Wi-Fi/celular), enviada pelo app ao backend como latitude e longitude. O áudio e o texto da conversa não são enviados: apenas as coordenadas.
+
+Na primeira conexão, o app pede a permissão de localização. Também é possível autorizar depois em **Ajustes → Localização (clima)**. Se a permissão for negada, o backend responde pedindo para ativar o GPS; não há cidade padrão nem estimativa por IP.
+
+A cidade no `config.json` é apenas uma alternativa manual. Para usar o GPS, deixe os campos vazios:
+
+```json
+"weather": {
+  "enabled": true,
+  "location": "",
+  "latitude": null,
+  "longitude": null,
+  "timezone": "auto",
+  "timeout_s": 10,
+  "cache_ttl_s": 600
+}
+```
+
+- `location`: vazio = usa o GPS do app. Preencha apenas para fixar uma cidade manualmente.
+- `latitude`/`longitude`: alternativa manual quando o app não envia coordenadas; use os dois juntos.
+- `cache_ttl_s`: tempo em segundos para reaproveitar a previsão (padrão 600 = 10 min).
+
+Também é possível configurar uma cidade manual por ambiente:
+
+```bash
+export BMO_WEATHER_LOCATION="São Paulo"
+```
+
+O PC precisa de saída HTTPS para `api.open-meteo.com`. O nome da cidade é obtido com `api.bigdatacloud.net`; se esse serviço falhar, a resposta usa “sua localização” e a previsão continua funcionando. Perguntas como “vai chover hoje?”, “qual a temperatura?” e “como está o tempo amanhã?” são respondidas localmente, sem passar pelo LLM, e faladas pelo TTS.
+
+## 9. Iniciar o backend
 
 ```bash
 ./backend/run.sh
@@ -239,7 +272,7 @@ sudo ufw allow 8766/udp
 
 Não faça port forwarding no roteador. O serviço é para LAN, sem TLS.
 
-## 9. Build do app Android
+## 10. Build do app Android
 
 ### Debug
 
@@ -256,9 +289,9 @@ adb install -r android-app/app/build/outputs/apk/debug/app-debug.apk
 adb install -r android-app/app/build/outputs/apk/release/app-release.apk
 ```
 
-O APK release usa o applicationId `br.com.bmoapp`; o debug usa `br.com.bmoapp.debug`. Os dois podem ficar instalados ao mesmo tempo.
+O APK release usa o applicationId `com.spacexjr.saturnbmo`; o debug usa `com.spacexjr.saturnbmo.debug`. Os dois podem ficar instalados ao mesmo tempo.
 
-## 10. Conectar o app
+## 11. Conectar o app
 
 ### Pela rede Wi-Fi (uso normal)
 
@@ -273,6 +306,7 @@ O APK release usa o applicationId `br.com.bmoapp`; o debug usa `br.com.bmoapp.de
 4. Informe o IP, a porta `8765` e o token.
 5. Toque em **Testar** e confira LLM/STT/TTS.
 6. Toque em **Salvar e conectar**.
+7. Autorize a localização quando o app pedir (ou em **Ajustes → Localização (clima)**). O clima não usa cidade padrão.
 
 Se a rede tiver isolamento de clientes (AP isolation) ou firewall bloqueando, o celular não verá o PC. Veja [SOLUCAO_DE_PROBLEMAS.md](SOLUCAO_DE_PROBLEMAS.md).
 
@@ -280,14 +314,14 @@ Se a rede tiver isolamento de clientes (AP isolation) ou firewall bloqueando, o 
 
 ```bash
 adb reverse tcp:8765 tcp:8765
-adb shell am start -n br.com.bmoapp.debug/br.com.bmoapp.MainActivity \
+adb shell am start -n com.spacexjr.saturnbmo.debug/com.spacexjr.saturnbmo.MainActivity \
   --es bmo_host 127.0.0.1 --ei bmo_port 8765 \
   --es bmo_token "$(cat backend/data/token)"
 ```
 
 O `adb reverse` encaminha a porta do celular para o PC via USB. Não é o modo de uso final.
 
-## 11. Testes de áudio
+## 12. Testes de áudio
 
 No app, em **Ajustes → Áudio**:
 
@@ -296,7 +330,7 @@ No app, em **Ajustes → Áudio**:
 
 O teste de microfone é local: o áudio não é enviado ao PC nem gravado.
 
-## 12. Serviço em segundo plano
+## 13. Serviço em segundo plano
 
 Ative **Escuta com tela desligada** em Ajustes. O Android mostra uma notificação persistente “BMO — Microfone ativo”. Com a tela apagada, o serviço mantém o microfone e a conexão.
 
@@ -306,7 +340,7 @@ Observações:
 - Fabricantes como Xiaomi podem encerrar serviços em segundo plano; permita o app na lista de exceções de bateria.
 - Se o microfone for pausado, o serviço encerra depois de alguns segundos.
 
-## 13. Verificação final
+## 14. Verificação final
 
 ```bash
 # Backend

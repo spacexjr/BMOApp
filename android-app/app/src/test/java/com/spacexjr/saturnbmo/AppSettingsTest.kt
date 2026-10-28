@@ -1,4 +1,4 @@
-package br.com.bmoapp
+package com.spacexjr.saturnbmo
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

@@ -1,4 +1,4 @@
-package br.com.bmoapp.ui
+package com.spacexjr.saturnbmo.ui
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography

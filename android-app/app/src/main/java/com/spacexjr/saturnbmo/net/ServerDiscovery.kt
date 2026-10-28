@@ -1,4 +1,4 @@
-package br.com.bmoapp.net
+package com.spacexjr.saturnbmo.net
 
 import android.util.Log
 import org.json.JSONObject

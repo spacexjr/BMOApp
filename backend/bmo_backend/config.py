@@ -37,6 +37,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "system_prompt": (
             "Você é o BMO, um pequeno robô assistente simpático que mora em um celular. "
             "Fale sempre em português do Brasil, com frases curtas, claras e amigáveis. "
+            "Não use emojis nem símbolos; sua resposta será falada em voz alta. "
             "Não invente que executou ações. Você não tem câmera e não tira fotos. "
             "Quando não souber algo, diga que não sabe. "
             "Se o usuário pedir a hora ou a data, o sistema responde antes de você; "
@@ -72,6 +73,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "vad_pre_roll_ms": 300,
         "min_utterance_ms": 350,
         "max_utterance_s": 15,
+    },
+    "weather": {
+        "enabled": True,
+        # Vazio = usa o GPS enviado pelo app. Pode ser preenchido como alternativa manual.
+        "location": "",
+        # Se informados, servem de alternativa quando o app não enviar coordenadas.
+        "latitude": None,
+        "longitude": None,
+        "timezone": "auto",
+        "timeout_s": 10,
+        "cache_ttl_s": 600,
     },
     "wakeword": {
         "enabled": True,
@@ -151,6 +163,9 @@ def load_config(config_file: str | Path | None = None) -> dict[str, Any]:
         ("stt", "model"): "BMO_STT_MODEL",
         ("tts", "piper_binary"): "BMO_PIPER_BINARY",
         ("tts", "voice_model"): "BMO_TTS_VOICE",
+        ("weather", "location"): "BMO_WEATHER_LOCATION",
+        ("weather", "latitude"): "BMO_WEATHER_LATITUDE",
+        ("weather", "longitude"): "BMO_WEATHER_LONGITUDE",
     }
     for (section, key), env_name in env_map.items():
         value = os.environ.get(env_name)

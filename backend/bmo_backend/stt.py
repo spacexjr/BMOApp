@@ -86,10 +86,18 @@ class WhisperCppStt:
                 if self.prompt:
                     cmd.extend(["--prompt", self.prompt])
                 log.debug("Executando STT: %s", " ".join(cmd[:6]))
+                # O whisper-cli carrega libwhisper.so/libggml.so do próprio diretório.
+                # Incluí-lo no LD_LIBRARY_PATH evita falhas quando o projeto é movido
+                # ou renomeado e o RUNPATH gravado no binário fica desatualizado.
+                env = os.environ.copy()
+                lib_dir = str(self.binary.resolve().parent)
+                current = env.get("LD_LIBRARY_PATH", "")
+                env["LD_LIBRARY_PATH"] = f"{lib_dir}:{current}" if current else lib_dir
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.PIPE,
+                    env=env,
                 )
                 try:
                     _, stderr = await asyncio.wait_for(proc.communicate(), timeout=self.timeout_s)

@@ -1,6 +1,6 @@
 # Evidências de teste
 
-Registro do que foi realmente executado. Datas no fuso local (America/Sao_Paulo), em **2026-10-26**.
+Registro do que foi realmente executado. Datas no fuso local (America/Sao_Paulo), em **2026-10-28**.
 
 ## Ambiente
 
@@ -58,21 +58,22 @@ cd backend
 Resultado:
 
 ```text
-...........................                                              [100%]
-27 passed, 1 warning in 0.59s
+........................................                                 [100%]
+40 passed, 1 warning in 1.70s
 ```
 
 O único aviso é uma depreciação externa do Starlette/httpx (`StarletteDeprecationWarning`), não uma falha do projeto.
 
 Cobrem:
 
-- validação do protocolo;
+- validação do protocolo, incluindo coordenadas de GPS;
 - autenticação;
 - VAD e conversão de áudio;
 - detecção de palavra de ativação;
 - ações locais de hora/data;
 - endpoints HTTP;
 - comportamento de sessão WebSocket;
+- clima por coordenadas enviadas no HTTP e no WebSocket;
 - limpeza de transcrição.
 
 ## 2. Testes unitários do Android
@@ -87,7 +88,7 @@ cd android-app
 Resultado:
 
 ```text
-TEST-br.com.bmoapp.AppSettingsTest.xml
+TEST-com.spacexjr.saturnbmo.AppSettingsTest.xml
 tests="3" skipped="0" failures="0" errors="0"
 ```
 
@@ -140,7 +141,7 @@ A transcrição não foi perfeita (“E BMO” em vez de “Ei, BMO”), mas a n
 O APK debug foi instalado e iniciado com:
 
 ```bash
-adb shell am start -n br.com.bmoapp.debug/br.com.bmoapp.MainActivity \
+adb shell am start -n com.spacexjr.saturnbmo.debug/com.spacexjr.saturnbmo.MainActivity \
   --es bmo_host 192.168.3.24 \
   --ei bmo_port 8765 \
   --es bmo_token "$(cat backend/data/token)"
@@ -244,6 +245,7 @@ Ressalva: o teste prolongado com a tela apagada e voz humana ao vivo ainda não 
 ## 8. O que não foi validado
 
 - “Ei, BMO” com voz humana ao vivo, em várias distâncias/ruídos.
+- Permissão e leitura de GPS no celular real.
 - Latência ponta a ponta com voz humana.
 - Qualidade acústica do alto-falante e do microfone dentro da carcaça.
 - Cancelamento de eco com o BMO falando e ouvindo ao mesmo tempo.

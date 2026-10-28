@@ -1,4 +1,4 @@
-package br.com.bmoapp.ui
+package com.spacexjr.saturnbmo.ui
 
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -47,14 +47,14 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import br.com.bmoapp.AppSettings
-import br.com.bmoapp.BmoEngine
-import br.com.bmoapp.BmoState
-import br.com.bmoapp.BmoUiState
-import br.com.bmoapp.ConnectionState
-import br.com.bmoapp.LogEntry
-import br.com.bmoapp.ServiceStatus
-import br.com.bmoapp.net.ServerDiscovery
+import com.spacexjr.saturnbmo.AppSettings
+import com.spacexjr.saturnbmo.BmoEngine
+import com.spacexjr.saturnbmo.BmoState
+import com.spacexjr.saturnbmo.BmoUiState
+import com.spacexjr.saturnbmo.ConnectionState
+import com.spacexjr.saturnbmo.LogEntry
+import com.spacexjr.saturnbmo.ServiceStatus
+import com.spacexjr.saturnbmo.net.ServerDiscovery
 
 @Composable
 fun SettingsScreen(
@@ -83,9 +83,21 @@ fun SettingsScreen(
     var searching by remember { mutableStateOf(false) }
     var found by remember { mutableStateOf<List<ServerDiscovery.FoundServer>>(emptyList()) }
     var showFound by remember { mutableStateOf(false) }
+    var locationGranted by remember { mutableStateOf(engine.hasLocationPermission()) }
 
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) engine.startMicTest() else formError = "Permissão de microfone negada."
+    }
+
+    val locationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        locationGranted = engine.hasLocationPermission()
+        if (locationGranted) {
+            engine.refreshLocation()
+        } else {
+            formError = "Permissão de localização negada. O clima não terá coordenadas."
+        }
     }
 
     fun candidate(): AppSettings? {
@@ -273,6 +285,42 @@ fun SettingsScreen(
             }
             Text(
                 "O áudio do microfone não é gravado em arquivo e não sai da rede local.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = BmoInkSoft,
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+        SectionCard(title = "Localização (clima)") {
+            Text(
+                when {
+                    !locationGranted -> "Permissão não concedida. O clima precisa do GPS para saber onde você está."
+                    ui.locationReady -> "Localização obtida. As coordenadas são enviadas apenas para a consulta de clima."
+                    else -> "Permissão concedida. Obtendo a localização do aparelho..."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (locationGranted) BmoInk else BmoWarning,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    if (locationGranted) {
+                        engine.refreshLocation()
+                    } else {
+                        locationLauncher.launch(
+                            arrayOf(
+                                Manifest.permission.ACCESS_FINE_LOCATION,
+                                Manifest.permission.ACCESS_COARSE_LOCATION,
+                            )
+                        )
+                    }
+                },
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                Text(if (locationGranted) "Atualizar localização" else "Permitir localização")
+            }
+            Text(
+                "Coordenada aproximada por GPS ou Wi-Fi. Não há histórico de localização no app.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = BmoInkSoft,
             )

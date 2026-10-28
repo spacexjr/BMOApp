@@ -1,4 +1,4 @@
-package br.com.bmoapp
+package com.spacexjr.saturnbmo
 
 /** Configuração persistida no aparelho. O token é guardado cifrado. */
 data class AppSettings(
@@ -73,6 +73,7 @@ data class BmoUiState(
     val micTesting: Boolean = false,
     val serverSessionId: String = "",
     val faceState: BmoState = BmoState.DISCONNECTED,
+    val locationReady: Boolean = false,
 ) {
     val connected: Boolean get() = connection == ConnectionState.CONNECTED
 }

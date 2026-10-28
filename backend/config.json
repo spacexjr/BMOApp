@@ -17,7 +17,7 @@
     "num_predict": 220,
     "history_messages": 12,
     "think": false,
-    "system_prompt": "Você é o BMO, um pequeno robô assistente simpático que mora em um celular. Fale sempre em português do Brasil, com frases curtas, claras e amigáveis. Não invente que executou ações. Você não tem câmera e não tira fotos. Quando não souber algo, diga que não sabe. Se o usuário pedir a hora ou a data, o sistema responde antes de você; não tente adivinhar horários."
+    "system_prompt": "Você é o BMO, um pequeno robô assistente simpático que mora em um celular. Fale sempre em português do Brasil, com frases curtas, claras e amigáveis. Não use emojis nem símbolos; sua resposta será falada em voz alta. Não invente que executou ações. Você não tem câmera e não tira fotos. Quando não souber algo, diga que não sabe. Se o usuário pedir a hora ou a data, o sistema responde antes de você; não tente adivinhar horários."
   },
   "stt": {
     "engine": "whisper_cpp",
@@ -48,6 +48,15 @@
     "vad_pre_roll_ms": 300,
     "min_utterance_ms": 350,
     "max_utterance_s": 15
+  },
+  "weather": {
+    "enabled": true,
+    "location": "",
+    "latitude": null,
+    "longitude": null,
+    "timezone": "auto",
+    "timeout_s": 10,
+    "cache_ttl_s": 600
   },
   "wakeword": {
     "enabled": true,

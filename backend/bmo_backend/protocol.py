@@ -21,6 +21,7 @@ class ProtocolError(ValueError):
 CLIENT_MESSAGE_TYPES = {
     "hello",
     "ping",
+    "location",
     "audio.start",
     "audio.end",
     "text",
@@ -78,6 +79,33 @@ def validate_text(payload: dict[str, Any], max_chars: int = 1000) -> str:
     if len(text) > max_chars:
         raise ProtocolError("text_too_long", f"O texto excede {max_chars} caracteres.")
     return text
+
+
+def validate_location(payload: dict[str, Any]) -> dict[str, float]:
+    """Valida coordenadas de GPS enviadas pelo app."""
+    try:
+        latitude = float(payload.get("latitude"))
+        longitude = float(payload.get("longitude"))
+    except (TypeError, ValueError) as exc:
+        raise ProtocolError(
+            "invalid_location",
+            "Envie latitude e longitude numéricas juntas.",
+        ) from exc
+    if not -90.0 <= latitude <= 90.0:
+        raise ProtocolError("invalid_location", "latitude deve estar entre -90 e 90.")
+    if not -180.0 <= longitude <= 180.0:
+        raise ProtocolError("invalid_location", "longitude deve estar entre -180 e 180.")
+    location = {"latitude": latitude, "longitude": longitude}
+    accuracy = payload.get("accuracy")
+    if accuracy is not None:
+        try:
+            accuracy_value = float(accuracy)
+        except (TypeError, ValueError) as exc:
+            raise ProtocolError("invalid_location", "accuracy deve ser numérico.") from exc
+        if accuracy_value < 0:
+            raise ProtocolError("invalid_location", "accuracy não pode ser negativo.")
+        location["accuracy"] = accuracy_value
+    return location
 
 
 def _depth(value: Any, level: int = 0) -> int:

@@ -1,4 +1,4 @@
-package br.com.bmoapp.ui
+package com.spacexjr.saturnbmo.ui
 
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
@@ -21,7 +21,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import br.com.bmoapp.BmoState
+import com.spacexjr.saturnbmo.BmoState
 import kotlinx.coroutines.delay
 
 /**

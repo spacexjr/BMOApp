@@ -1,6 +1,12 @@
 import pytest
 
-from bmo_backend.protocol import ProtocolError, validate_audio_start, validate_client_message, validate_text
+from bmo_backend.protocol import (
+    ProtocolError,
+    validate_audio_start,
+    validate_client_message,
+    validate_location,
+    validate_text,
+)
 
 
 def test_valid_message():
@@ -30,3 +36,23 @@ def test_audio_start_validation():
         validate_audio_start({"sample_rate": 123})
     with pytest.raises(ProtocolError):
         validate_audio_start({"format": "mp3"})
+
+
+def test_location_validation():
+    location = validate_location(
+        {"latitude": -23.5505, "longitude": -46.6333, "accuracy": 8.5}
+    )
+    assert location == {
+        "latitude": -23.5505,
+        "longitude": -46.6333,
+        "accuracy": 8.5,
+    }
+    assert validate_client_message({"type": "location"})["type"] == "location"
+    with pytest.raises(ProtocolError):
+        validate_location({"latitude": 91, "longitude": 0})
+    with pytest.raises(ProtocolError):
+        validate_location({"latitude": 0, "longitude": -181})
+    with pytest.raises(ProtocolError):
+        validate_location({"latitude": 0, "longitude": 0, "accuracy": -1})
+    with pytest.raises(ProtocolError):
+        validate_location({"latitude": 0})

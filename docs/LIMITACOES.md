@@ -40,7 +40,7 @@ No teste E2E sintético, a fala “Ei, BMO, que horas são?” foi transcrita co
 - Hora e data são resolvidas localmente antes do LLM.
 - Histórico é em memória, por sessão; não há persistência entre reinícios.
 - Modelos maiores podem ser lentos em CPU.
-- Não há ferramenta de busca na internet, clima, notícias etc.
+- Não há ferramenta de busca na internet, notícias, e-mails etc. O clima é uma exceção: temperatura e previsão de chuva são consultadas no Open-Meteo usando as coordenadas do GPS do celular. Sem permissão de localização no app, a consulta de clima não funciona.
 
 ## 4. TTS
 

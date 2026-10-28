@@ -37,11 +37,18 @@ from .protocol import (
     now_ms,
     validate_audio_start,
     validate_client_message,
+    validate_location,
     validate_text,
 )
 from .stt import SttError, SttUnavailable, WhisperCppStt
 from .tts import TtsError, TtsService, TtsUnavailable
 from .wakeword import WakeWordDetector
+from .weather import (
+    WeatherError,
+    WeatherService,
+    WeatherUnavailable,
+    detect_weather_intent,
+)
 
 log = logging.getLogger("bmo.server")
 
@@ -53,10 +60,15 @@ log = logging.getLogger("bmo.server")
 
 class Services:
     def __init__(self, config: dict[str, Any], *, stt: Any = None, tts: Any = None,
+                 weather: Any = None,
                  brain_factory: Callable[[], Any] | None = None) -> None:
         self.config = config
         self.stt = stt if stt is not None else WhisperCppStt(config["stt"])
         self.tts = tts if tts is not None else TtsService(config["tts"])
+        self.weather = (
+            weather if weather is not None
+            else WeatherService(config.get("weather", {}))
+        )
         self.brain_factory = brain_factory or (lambda: OllamaBrain(config["llm"]))
         self.wake = WakeWordDetector(
             config["wakeword"].get("phrases"),
@@ -166,6 +178,8 @@ class BodyTextRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
     session_id: str = Field(default="http", max_length=64)
     speak: bool = True
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
 
 
 def _error_response(code: str, message: str, status_code: int = 400) -> JSONResponse:
@@ -252,7 +266,7 @@ def create_app(config: dict[str, Any] | None = None, services: Services | None =
                 "phrases": config["wakeword"].get("phrases", []),
                 "note": config["wakeword"].get("note", ""),
             },
-            "capabilities": ["text", "audio", "tts", "vad", "get_time", "get_date"],
+            "capabilities": ["text", "audio", "tts", "vad", "location", "get_time", "get_date", "get_weather"],
             "allowed_commands": config["security"].get("allowed_commands", []),
         }
 
@@ -289,12 +303,26 @@ def create_app(config: dict[str, Any] | None = None, services: Services | None =
             return _error_response("empty_text", "O texto está vazio.", 422)
         if len(text_value) > int(config["security"].get("max_text_chars", 1000)):
             return _error_response("text_too_long", "Texto muito longo.", 422)
+        if (request.latitude is None) != (request.longitude is None):
+            return _error_response(
+                "invalid_location",
+                "Envie latitude e longitude juntas.",
+                422,
+            )
         brain = services.brain_for(request.session_id or "http")
         action = detect_local_intent(text_value)
+        weather_intent = None if action is not None else detect_weather_intent(text_value)
         try:
             if action is not None:
                 answer = action.text
                 command = action.action
+            elif weather_intent is not None:
+                answer = await services.weather.answer(
+                    weather_intent,
+                    latitude=request.latitude,
+                    longitude=request.longitude,
+                )
+                command = "get_weather"
             else:
                 answer = sanitize_reply(await brain.reply(text_value))
                 parsed = parse_authorized_action(answer, config["security"].get("allowed_commands"))
@@ -322,6 +350,10 @@ def create_app(config: dict[str, Any] | None = None, services: Services | None =
             }
         except LlmUnavailable as exc:
             return _error_response("llm_unavailable", str(exc), 503)
+        except WeatherUnavailable as exc:
+            return _error_response("weather_unavailable", str(exc), 503)
+        except WeatherError as exc:
+            return _error_response("weather_error", str(exc), 503)
         except (LlmError, TtsError, TtsUnavailable) as exc:
             return _error_response("processing_error", str(exc), 500)
 
@@ -374,6 +406,7 @@ class BmoSession:
         self.state = "idle"
         self.capture_active = False
         self.bypass_wake_once = False
+        self.location: tuple[float, float] | None = None
         self.seq = 0
         self.generation = 0
         self._closed = False
@@ -438,7 +471,7 @@ class BmoSession:
                 "mode": self.config["wakeword"].get("mode", "transcript"),
                 "phrases": self.config["wakeword"].get("phrases", []),
             },
-            capabilities=["text", "audio", "tts", "vad", "get_time", "get_date"],
+            capabilities=["text", "audio", "tts", "vad", "location", "get_time", "get_date", "get_weather"],
         )
         await self.set_state("idle", "Conectado. Toque em Ouvir para começar.")
         try:
@@ -487,6 +520,17 @@ class BmoSession:
 
     # -- controle ----------------------------------------------------------
 
+    async def _store_location(self, payload: dict[str, Any]) -> bool:
+        if "latitude" not in payload and "longitude" not in payload:
+            return False
+        try:
+            location = validate_location(payload)
+        except ProtocolError as exc:
+            await self.send_error(exc.code, exc.message)
+            return False
+        self.location = (location["latitude"], location["longitude"])
+        return True
+
     async def handle_control(self, payload: dict[str, Any]) -> None:
         msg_type = payload["type"]
         if msg_type == "hello":
@@ -499,9 +543,17 @@ class BmoSession:
                 )
                 await self.ws.close(code=4400)
             else:
+                await self._store_location(payload)
                 await self.event("hello.ok", protocol=PROTOCOL_VERSION, session_id=self.session_id)
         elif msg_type == "ping":
             await self.event("pong", echo=payload.get("ts"), server_ts=now_ms())
+        elif msg_type == "location":
+            if await self._store_location(payload):
+                await self.event(
+                    "location.ok",
+                    latitude=self.location[0] if self.location else None,
+                    longitude=self.location[1] if self.location else None,
+                )
         elif msg_type == "activate":
             self.bypass_wake_once = True
             self._ignore_audio_until = 0.0
@@ -656,8 +708,21 @@ class BmoSession:
         await self.set_state("thinking", "Pensando...")
         try:
             local = detect_local_intent(user_text)
+            weather_intent = None if local is not None else detect_weather_intent(user_text)
             if local is not None:
                 answer = local.text
+                await self.event("assistant.text.delta", text=answer, id=assistant_id)
+            elif weather_intent is not None:
+                try:
+                    answer = await self.services.weather.answer(
+                        weather_intent,
+                        latitude=self.location[0] if self.location else None,
+                        longitude=self.location[1] if self.location else None,
+                    )
+                except (WeatherUnavailable, WeatherError) as exc:
+                    await self.send_error("weather_error", str(exc))
+                    await self._recover_after_error()
+                    return
                 await self.event("assistant.text.delta", text=answer, id=assistant_id)
             else:
                 pieces: list[str] = []

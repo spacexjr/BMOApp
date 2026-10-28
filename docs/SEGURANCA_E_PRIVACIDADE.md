@@ -8,7 +8,7 @@ O que o projeto tenta proteger:
 
 - acesso não autorizado ao microfone/backend por outras máquinas da rede;
 - leitura casual do token no celular;
-- envio de áudio ou texto para serviços de nuvem;
+- envio de áudio ou texto para serviços de nuvem (exceto coordenadas de GPS/cidade na consulta de clima);
 - execução de comandos arbitrários pelo modelo de linguagem;
 - exposição de câmera e fotos.
 
@@ -77,6 +77,8 @@ O backend pode manter logs de eventos e erros. O app mantém até 300 entradas d
 - O app não faz upload para nuvem.
 - O backend conversa com o Ollama em `127.0.0.1:11434`; não envia áudio para APIs externas.
 - Whisper.cpp, Piper e espeak-ng rodam localmente.
+- A consulta de clima acessa `api.open-meteo.com` (previsão) e, para descobrir o nome da cidade, `api.bigdatacloud.net` (geocodificação reversa). Apenas as coordenadas do GPS do celular — ou cidade/coordenadas configuradas manualmente — são enviadas; o texto da conversa e o áudio ficam no PC. Se a geocodificação reversa falhar, a previsão continua e a resposta usa “sua localização”.
+- O app pede permissão de localização (`ACCESS_FINE_LOCATION` e `ACCESS_COARSE_LOCATION`) para o clima. As coordenadas são enviadas apenas pela rede local ao backend e não são gravadas em histórico.
 
 Se você trocar o Ollama por um provedor remoto, a política de privacidade muda. O projeto padrão é local.
 
@@ -86,6 +88,8 @@ O LLM pode sugerir ações, mas o backend só autoriza:
 
 - `get_time`
 - `get_date`
+
+O clima (`get_weather`) é resolvido pelo backend antes do LLM, por meio de uma consulta HTTP ao Open-Meteo usando as coordenadas enviadas pelo GPS do app; o modelo não recebe acesso livre à rede.
 
 Qualquer outro JSON de ação é ignorado. Não há execução de shell, leitura de arquivos arbitrários, acesso à rede pelo modelo ou controle do aparelho. O prompt do sistema também instrui o modelo a não inventar ações.
 

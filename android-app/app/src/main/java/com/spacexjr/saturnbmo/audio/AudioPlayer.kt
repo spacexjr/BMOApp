@@ -1,4 +1,4 @@
-package br.com.bmoapp.audio
+package com.spacexjr.saturnbmo.audio
 
 import android.media.AudioAttributes
 import android.media.AudioFormat

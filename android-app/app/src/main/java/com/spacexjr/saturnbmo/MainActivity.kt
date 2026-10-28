@@ -1,4 +1,4 @@
-package br.com.bmoapp
+package com.spacexjr.saturnbmo
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -6,8 +6,8 @@ import androidx.activity.compose.setContent
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import br.com.bmoapp.ui.BmoApp
-import br.com.bmoapp.ui.BmoTheme
+import com.spacexjr.saturnbmo.ui.BmoApp
+import com.spacexjr.saturnbmo.ui.BmoTheme
 
 class MainActivity : ComponentActivity() {
     private val engine by lazy { BmoEngine.get(this) }

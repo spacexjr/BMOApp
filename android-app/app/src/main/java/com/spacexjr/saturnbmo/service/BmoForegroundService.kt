@@ -1,4 +1,4 @@
-package br.com.bmoapp.service
+package com.spacexjr.saturnbmo.service
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -11,10 +11,10 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import br.com.bmoapp.BmoEngine
-import br.com.bmoapp.ConnectionState
-import br.com.bmoapp.MainActivity
-import br.com.bmoapp.R
+import com.spacexjr.saturnbmo.BmoEngine
+import com.spacexjr.saturnbmo.ConnectionState
+import com.spacexjr.saturnbmo.MainActivity
+import com.spacexjr.saturnbmo.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -152,8 +152,8 @@ class BmoForegroundService : Service() {
     }
 
     companion object {
-        const val ACTION_START = "br.com.bmoapp.START_ESCUTA"
-        const val ACTION_STOP = "br.com.bmoapp.STOP_ESCUTA"
+        const val ACTION_START = "com.spacexjr.saturnbmo.START_ESCUTA"
+        const val ACTION_STOP = "com.spacexjr.saturnbmo.STOP_ESCUTA"
         private const val CHANNEL_ID = "bmo_escuta"
         private const val NOTIFICATION_ID = 42
 
