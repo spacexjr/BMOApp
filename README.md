@@ -1,4 +1,4 @@
-# BMO App
+# saturnBMO
 
 BMO de mesa com rosto animado no Android e processamento de voz/IA no PC.
 
