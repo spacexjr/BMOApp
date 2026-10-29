@@ -21,7 +21,6 @@ android-app/keystore/
 *.aab
 
 # Modelos e ferramentas locais (grandes e baixados à parte)
-tools/
 !tools/.gitkeep
 
 # Sistema / editores
