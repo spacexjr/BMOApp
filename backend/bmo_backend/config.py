@@ -159,6 +159,7 @@ def load_config(config_file: str | Path | None = None) -> dict[str, Any]:
         ("server", "port"): "BMO_PORT",
         ("llm", "base_url"): "BMO_OLLAMA_URL",
         ("llm", "model"): "BMO_LLM_MODEL",
+        ("llm", "system_prompt"): "BMO_SYSTEM_PROMPT",
         ("stt", "binary"): "BMO_STT_BINARY",
         ("stt", "model"): "BMO_STT_MODEL",
         ("tts", "piper_binary"): "BMO_PIPER_BINARY",
@@ -166,6 +167,7 @@ def load_config(config_file: str | Path | None = None) -> dict[str, Any]:
         ("weather", "location"): "BMO_WEATHER_LOCATION",
         ("weather", "latitude"): "BMO_WEATHER_LATITUDE",
         ("weather", "longitude"): "BMO_WEATHER_LONGITUDE",
+        ("wakeword", "phrases"): "BMO_WAKEWORD",
     }
     for (section, key), env_name in env_map.items():
         value = os.environ.get(env_name)
@@ -175,6 +177,8 @@ def load_config(config_file: str | Path | None = None) -> dict[str, Any]:
                     value = int(value)  # type: ignore[assignment]
                 except ValueError as exc:
                     raise SystemExit(f"{env_name} deve ser um número") from exc
+            if key == "phrases":
+                value = [phrase.strip() for phrase in value.split(",") if phrase.strip()]
             config[section][key] = value
 
     config["_config_file"] = str(path)

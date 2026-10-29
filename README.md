@@ -151,6 +151,9 @@ A palavra de ativação é **baseada na transcrição**. O áudio é transcrito 
 
 Isso **não** é um detector acústico treinado para “Ei, BMO”. O arquivo `wakeword_hey_jarvis.onnx` do projeto original é o modelo “Hey Jarvis” e é preservado apenas como referência; ele não é usado como detector principal. Vamos adicionar wakeword e voz do BMO futuramente. Veja [docs/LIMITACOES.md](docs/LIMITACOES.md).
 
+Vamos melhorar a deteccao de voz futuramente
+
+
 ## Build
 
 ### Debug
